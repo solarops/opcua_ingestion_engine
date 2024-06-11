@@ -6,6 +6,8 @@
 # dotenv files
 .env
 
+*.txt
+
 #MAC
 .DS_Store
 .DS_Store/*
