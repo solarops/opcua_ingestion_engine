@@ -12,6 +12,8 @@
 .DS_Store
 .DS_Store/*
 
+nodes*.json
+
 # User-specific files
 *.rsuser
 *.suo

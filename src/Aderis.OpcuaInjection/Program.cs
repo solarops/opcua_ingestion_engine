@@ -5,46 +5,58 @@ using Opc.Ua;
 using Opc.Ua.Client;
 using Opc.Ua.Configuration;
 
+using System.Text.Json;
+using Aderis.OpcuaInjection.Models;
+
+public class LowercaseNamingPolicy : JsonNamingPolicy
+{
+    public override string ConvertName(string name)
+    {
+        // Convert the property name to lowercase
+        return name.ToLower();
+    }
+}
+
 class Program
 {
+    // private static void DFS_Starter(Session session, ReferenceDescription rd)
+    // {
 
-    private static void DFS(Session session, ReferenceDescription rd, List<ReferenceDescription> NodesToPoll, int numSpaces)
+    // }
+
+    private static void DFS(Session session, ReferenceDescription rd, JsTreeNode currNode)
     {
-        if (rd.NodeClass == NodeClass.Variable)
-        {
-            // Add to polling nodes
-            NodesToPoll.Add(rd);
-        }
-
-
-        if (rd.NodeClass == NodeClass.Variable || rd.NodeClass == NodeClass.Object)
-        {
-            // print
-            // StringBuilder sb = new StringBuilder();
-            // sb.Append(new string(' ', numSpaces));
-            // sb.Append(rd.DisplayName);
-            // sb.Append(", ");
-            // sb.Append(rd.BrowseName);
-            // sb.Append(", ");
-            // sb.Append(rd.NodeClass);
-            // sb.Append(", ");
-            // sb.Append(rd.NodeId);
-            // Console.WriteLine(sb.ToString());
-        }
-
+        // Already Variable or Object
+        // if (rd.NodeClass == NodeClass.Variable || rd.NodeClass == NodeClass.Object)
 
         ReferenceDescriptionCollection nextRefs;
         byte[] nextCp;
 
-        // Looks for next level 
+        // Immediately look for next children
         session.Browse(null, null, ExpandedNodeId.ToNodeId(rd.NodeId, session.NamespaceUris), 0u, BrowseDirection.Forward, ReferenceTypeIds.HierarchicalReferences, true, (uint)NodeClass.Variable | (uint)NodeClass.Object, out nextCp, out nextRefs);
 
         if (nextRefs.Count == 0) return;
 
         foreach (var nextRd in nextRefs)
         {
-            DFS(session, nextRd, NodesToPoll, numSpaces + 2);
-            
+            StringBuilder sb = new StringBuilder();
+            sb.Append(nextRd.DisplayName.Text);
+            sb.Append(" (");
+            sb.Append(nextRd.NodeClass.ToString());
+            sb.Append(")");
+
+            // new Node
+            JsTreeNode jsTreeNode = new JsTreeNode()
+            {
+                Text = sb.ToString(),
+                Id = nextRd.BrowseName.ToString()
+            };
+
+            currNode.Children.Add(jsTreeNode);
+
+            // Search for children of current Node
+            // nextRd and jsTreeNode are references to the same Node
+            DFS(session, nextRd, jsTreeNode);
         }
         // return;
     }
@@ -52,8 +64,8 @@ class Program
     static async Task Main(string[] args)
     {
         // Define the server URL
-        // string serverUrl = "opc.tcp://localhost:53530";
-        string serverUrl = "opc.tcp://localhost:62541/discovery";
+        string serverUrl = "opc.tcp://localhost:53530";
+        // string serverUrl = "opc.tcp://localhost:62541/discovery";
 
         // EXAMPLE is for Anonymous user, no certificate
 
@@ -104,6 +116,12 @@ class Program
                 Console.WriteLine("Connection to the OPC UA server established successfully.");
 
                 Console.WriteLine("Step 3 - Browse the server namespace.");
+
+                JsTreeExport jsTreeExport = new();
+
+                NodeId objectsFolderId = ObjectIds.ObjectsFolder;
+
+
                 ReferenceDescriptionCollection refs;
                 Byte[] cp;
                 session.Browse(null, null, ObjectIds.ObjectsFolder, 0u, BrowseDirection.Forward, ReferenceTypeIds.HierarchicalReferences, true, (uint)NodeClass.Variable | (uint)NodeClass.Object | (uint)NodeClass.Method, out cp, out refs);
@@ -114,10 +132,21 @@ class Program
 
                 // TODO: evaluate searching algorithms for trees, need to pick NodeClass: Variable (not VariableType)
 
-                // foreach (var rd in refs)
-                // {
-                //     DFS(session, rd, NodesToPoll, 0);
-                // }
+                // Setup 1st level of jsTreeExport
+                foreach (var rd in refs)
+                {
+                    // Top Level Objects, immediately add to jsTreeExport.Core.Data
+                    JsTreeNode jsTreeNode = new JsTreeNode()
+                    {
+                        Text = rd.DisplayName.Text,
+                        Id = rd.BrowseName.ToString()
+                    };
+
+                    jsTreeExport.Core.Data.Add(jsTreeNode);
+
+                    // rd and jsTreeNode are references to the same Node
+                    DFS(session, rd, jsTreeNode);
+                }
 
                 Console.WriteLine("########################");
 
@@ -146,48 +175,58 @@ class Program
                 //     Thread.Sleep(2000);
                 // }
 
-                var subscription = new Subscription()
-                {
-                    DisplayName = "Console ReferenceClient Subscription",
-                    PublishingEnabled = true,
-                    PublishingInterval = 1000,
-                    LifetimeCount = 0,
-                    MinLifetimeInterval = 120_000,
-                };
+                // var subscription = new Subscription()
+                // {
+                //     DisplayName = "Console ReferenceClient Subscription",
+                //     PublishingEnabled = true,
+                //     PublishingInterval = 1000,
+                //     LifetimeCount = 0,
+                //     MinLifetimeInterval = 120_000,
+                // };
 
-                session.AddSubscription(subscription);
-                subscription.Create();
+                // session.AddSubscription(subscription);
+                // subscription.Create();
 
-                // BEGIN Custom
-                var monitoredItem = new MonitoredItem(subscription.DefaultItem)
-                {
-                    StartNodeId = "ns=2;s=[default]/Inverter_Tags/PCS_1_1_1/000 - Raw Tags/ACTIVE_POWER",
-                    AttributeId = Attributes.Value,
-                    DisplayName = "power_true_kw",
-                    SamplingInterval = 1000, // ms
-                    QueueSize = 10,
-                    DiscardOldest = true
-                };
+                // // BEGIN Custom
+                // var monitoredItem = new MonitoredItem(subscription.DefaultItem)
+                // {
+                //     StartNodeId = "ns=2;s=[default]/Inverter_Tags/PCS_1_1_1/000 - Raw Tags/ACTIVE_POWER",
+                //     AttributeId = Attributes.Value,
+                //     DisplayName = "power_true_kw",
+                //     SamplingInterval = 1000, // ms
+                //     QueueSize = 10,
+                //     DiscardOldest = true
+                // };
 
-                monitoredItem.Notification += OnMonitoredItemNotification;
-                subscription.AddItem(monitoredItem);
-                subscription.ApplyChanges();
+                // monitoredItem.Notification += OnMonitoredItemNotification;
+                // subscription.AddItem(monitoredItem);
+                // subscription.ApplyChanges();
 
-                var monitoredItem2 = new MonitoredItem(subscription.DefaultItem)
-                {
-                    StartNodeId = "ns=2;s=[default]/Inverter_Tags/PCS_1_1_1/ACTIVE_POWER",
-                    AttributeId = Attributes.Value,
-                    DisplayName = "power_true_kw_1",
-                    SamplingInterval = 1000, // ms
-                    QueueSize = 10,
-                    DiscardOldest = true
-                };
+                // var monitoredItem2 = new MonitoredItem(subscription.DefaultItem)
+                // {
+                //     StartNodeId = "ns=2;s=[default]/Inverter_Tags/PCS_1_1_1/ACTIVE_POWER",
+                //     AttributeId = Attributes.Value,
+                //     DisplayName = "power_true_kw_1",
+                //     SamplingInterval = 1000, // ms
+                //     QueueSize = 10,
+                //     DiscardOldest = true
+                // };
 
-                monitoredItem2.Notification += OnMonitoredItemNotification;
-                subscription.AddItem(monitoredItem);
-                subscription.ApplyChanges();
+                // monitoredItem2.Notification += OnMonitoredItemNotification;
+                // subscription.AddItem(monitoredItem);
+                // subscription.ApplyChanges();
 
                 // END Custom
+
+                var options = new JsonSerializerOptions()
+                {
+                    PropertyNamingPolicy = new LowercaseNamingPolicy(),
+                    WriteIndented = true
+                };
+
+                string json = JsonSerializer.Serialize(jsTreeExport, options);
+
+                File.WriteAllText("./nodes.json", json);
 
                 // foreach (var node in NodesToPoll)
                 // {
@@ -207,8 +246,8 @@ class Program
                 // }
 
                 // wait for timeout or Ctrl-C
-                Console.WriteLine("Press any key to exit...");
-                Console.ReadKey();
+                // Console.WriteLine("Press any key to exit...");
+                // Console.ReadKey();
             }
         }
         catch (Exception ex)
