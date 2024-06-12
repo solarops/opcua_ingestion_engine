@@ -27,19 +27,11 @@ class Program
 
     static void DFS_Threaded(Session session, ReferenceDescription rd, JsTreeNode currNode, List<string> exclusionFolders, int searchDepth)
     {
+        Console.WriteLine($"Processing: {rd.BrowseName}");
         // Immediately look for next children
 
-        try
+        void SessionBrowse(out ReferenceDescriptionCollection nextRefs, out byte[] nextCp)
         {
-            // Keep first 3 (arbitrary) iterations/levels opened, then close all after.
-            if (searchDepth > 3)
-            {
-                currNode.State.Opened = false;
-            }
-
-            ReferenceDescriptionCollection nextRefs;
-            byte[] nextCp;
-
             session.Browse(
                 new RequestHeader()
                 {
@@ -55,6 +47,43 @@ class Program
                 out nextCp,
                 out nextRefs
             );
+        }
+
+        Thread CreateDFSThread(ReferenceDescription nextRd, JsTreeNode jsTreeNode)
+        {
+            Thread t1 = new Thread(() =>
+            {
+                DFS_Threaded(session, nextRd, jsTreeNode, exclusionFolders, searchDepth + 1);
+            });
+
+            // begin parallel execution
+            t1.Start();
+
+            return t1;
+        }
+
+        try
+        {
+            // Keep first 3 (arbitrary) iterations/levels opened, then close all after.
+            if (searchDepth > 3)
+            {
+                currNode.State.Opened = false;
+            }
+
+            ReferenceDescriptionCollection nextRefs;
+            byte[] nextCp;
+
+            try
+            {
+                SessionBrowse(out nextRefs, out nextCp);
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Exception Occurred when Browsing: ${ex}");
+                Console.WriteLine(ex.StackTrace);
+                Thread.Sleep(3000);
+                SessionBrowse(out nextRefs, out nextCp);
+            }
 
             if (nextRefs.Count == 0) return;
 
@@ -63,12 +92,6 @@ class Program
             foreach (var nextRd in nextRefs)
             {
                 string folderText = nextRd.DisplayName.Text;
-
-                StringBuilder sb = new StringBuilder();
-                sb.Append(folderText);
-                sb.Append(" (");
-                sb.Append(nextRd.NodeClass.ToString());
-                sb.Append(" NodeClass)");
 
                 if (exclusionFolders.Contains(folderText))
                 {
@@ -82,7 +105,7 @@ class Program
                 // new Node
                 JsTreeNode jsTreeNode = new JsTreeNode()
                 {
-                    Text = sb.ToString(),
+                    Text = folderText,
                     Id = nextRd.BrowseName.ToString()
                 };
 
@@ -92,15 +115,20 @@ class Program
                 // Search for children of current Node
                 // nextRd and jsTreeNode are references to the same Node
 
-                Thread t1 = new Thread(() =>
+                Thread t1;
+
+                try
                 {
-                    DFS_Threaded(session, nextRd, jsTreeNode, exclusionFolders, searchDepth + 1);
-                });
-
+                    t1 = CreateDFSThread(nextRd, jsTreeNode);
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"Exception Occurred when Creating Thread: ${ex}");
+                    Thread.Sleep(3000);
+                    t1 = CreateDFSThread(nextRd, jsTreeNode);
+                }
+                
                 childThreads.Add(t1);
-
-                // begin parallel execution
-                t1.Start();
             }
 
             foreach (var thread in childThreads)
@@ -113,7 +141,7 @@ class Program
         {
             Console.WriteLine("!!!!!!!!!!!!!!!!!!!!!!");
             // Handle exceptions and print the error
-            
+
             // Console.WriteLine($"Error: {ex.Message}");
             Console.WriteLine(ex.StackTrace);
 
@@ -157,12 +185,6 @@ class Program
         {
             string folderText = nextRd.DisplayName.Text;
 
-            StringBuilder sb = new StringBuilder();
-            sb.Append(folderText);
-            sb.Append(" (");
-            sb.Append(nextRd.NodeClass.ToString());
-            sb.Append(" NodeClass)");
-
             if (exclusionFolders.Contains(folderText))
             {
                 // under the child nodes of the current node. If one of its children's title is in exclusionFolders, then skip that leaf of the tree. 
@@ -175,7 +197,7 @@ class Program
             // new Node
             JsTreeNode jsTreeNode = new JsTreeNode()
             {
-                Text = sb.ToString(),
+                Text = folderText,
                 Id = nextRd.BrowseName.ToString()
             };
 
@@ -192,8 +214,8 @@ class Program
     static async Task Main(string[] args)
     {
         // Define the server URL
-        // string serverUrl = "opc.tcp://localhost:53530";
-        string serverUrl = "opc.tcp://localhost:62541/discovery";
+        string serverUrl = "opc.tcp://localhost:53530";
+        // string serverUrl = "opc.tcp://localhost:62541/discovery";
 
         // EXAMPLE is for Anonymous user, no certificate
 
@@ -390,7 +412,7 @@ class Program
                 string json = JsonSerializer.Serialize(jsTreeExport, options);
                 // END JsTree format
 
-                File.WriteAllText("./nodes-bulldog-threaded.json", json);
+                File.WriteAllText("./nodes-threaded.json", json);
                 stopwatch.Stop();
                 Console.WriteLine($"Elapsed Time: {stopwatch.Elapsed.TotalMilliseconds} ms");
 
