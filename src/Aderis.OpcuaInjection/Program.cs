@@ -25,6 +25,115 @@ class Program
 
     // }
 
+    static void DFS_Threaded(Session session, ReferenceDescription rd, JsTreeNode currNode, List<string> exclusionFolders, int searchDepth)
+    {
+        // Immediately look for next children
+
+        try
+        {
+            // Keep first 3 (arbitrary) iterations/levels opened, then close all after.
+            if (searchDepth > 3)
+            {
+                currNode.State.Opened = false;
+            }
+
+            ReferenceDescriptionCollection nextRefs;
+            byte[] nextCp;
+
+            session.Browse(
+                new RequestHeader()
+                {
+                    TimeoutHint = 15000
+                },
+                null,
+                ExpandedNodeId.ToNodeId(rd.NodeId, session.NamespaceUris),
+                0u,
+                BrowseDirection.Forward,
+                ReferenceTypeIds.HierarchicalReferences,
+                true,
+                (uint)NodeClass.Variable | (uint)NodeClass.Object,
+                out nextCp,
+                out nextRefs
+            );
+
+            if (nextRefs.Count == 0) return;
+
+            List<Thread> childThreads = new();
+
+            foreach (var nextRd in nextRefs)
+            {
+                string folderText = nextRd.DisplayName.Text;
+
+                StringBuilder sb = new StringBuilder();
+                sb.Append(folderText);
+                sb.Append(" (");
+                sb.Append(nextRd.NodeClass.ToString());
+                sb.Append(" NodeClass)");
+
+                if (exclusionFolders.Contains(folderText))
+                {
+                    // under the child nodes of the current node. If one of its children's title is in exclusionFolders, then skip that leaf of the tree. 
+                    // Continue to next child.
+
+                    // saves call to another DFS iteration
+                    continue;
+                }
+
+                // new Node
+                JsTreeNode jsTreeNode = new JsTreeNode()
+                {
+                    Text = sb.ToString(),
+                    Id = nextRd.BrowseName.ToString()
+                };
+
+                currNode.Children.Add(jsTreeNode);
+
+
+                // Search for children of current Node
+                // nextRd and jsTreeNode are references to the same Node
+
+                Thread t1 = new Thread(() =>
+                {
+                    DFS_Threaded(session, nextRd, jsTreeNode, exclusionFolders, searchDepth + 1);
+                });
+
+                childThreads.Add(t1);
+
+                // begin parallel execution
+                t1.Start();
+            }
+
+            foreach (var thread in childThreads)
+            {
+                thread.Join();
+            }
+
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine("!!!!!!!!!!!!!!!!!!!!!!");
+            // Handle exceptions and print the error
+            
+            // Console.WriteLine($"Error: {ex.Message}");
+            Console.WriteLine(ex.StackTrace);
+
+            Console.WriteLine(rd.ToString());
+            Console.WriteLine(currNode.ToString());
+
+            Console.WriteLine($"Number of threads: {Process.GetCurrentProcess().Threads.Count}");
+
+            if (ex is ServiceResultException sre)
+            {
+                Console.WriteLine("OPC UA server error");
+                Console.WriteLine($"Status Code: {sre.StatusCode}");
+            }
+
+            Console.WriteLine("#########################");
+
+            return;
+        }
+    }
+
     private static void DFS(Session session, ReferenceDescription rd, JsTreeNode currNode, List<string> exclusionFolders, int searchDepth)
     {
         // Already Variable or Object
@@ -148,7 +257,21 @@ class Program
 
                 ReferenceDescriptionCollection refs;
                 Byte[] cp;
-                session.Browse(null, null, ObjectIds.ObjectsFolder, 0u, BrowseDirection.Forward, ReferenceTypeIds.HierarchicalReferences, true, (uint)NodeClass.Variable | (uint)NodeClass.Object | (uint)NodeClass.Method, out cp, out refs);
+                session.Browse(
+                    new RequestHeader()
+                    {
+                        TimeoutHint = 15000
+                    },
+                    null,
+                    ObjectIds.ObjectsFolder,
+                    0u,
+                    BrowseDirection.Forward,
+                    ReferenceTypeIds.HierarchicalReferences,
+                    true,
+                    (uint)NodeClass.Variable | (uint)NodeClass.Object,
+                    out cp,
+                    out refs
+                );
 
                 // reference to root of ObjectsFolder
                 // session.Browse(null, null, ObjectIds.ObjectsFolder, 0u, BrowseDirection.Forward, ReferenceTypeIds.HierarchicalReferences, true, (uint)NodeClass.Variable | (uint)NodeClass.Object, out cp, out refs);
@@ -182,7 +305,8 @@ class Program
                     jsTreeExport.Core.Data.Add(jsTreeNode);
 
                     // rd and jsTreeNode are references to the same Node
-                    DFS(session, rd, jsTreeNode, browseExclusionFolders, 1);
+                    // DFS(session, rd, jsTreeNode, browseExclusionFolders, 1);
+                    DFS_Threaded(session, rd, jsTreeNode, browseExclusionFolders, 1);
                 }
 
                 Console.WriteLine("########################");
@@ -266,7 +390,7 @@ class Program
                 string json = JsonSerializer.Serialize(jsTreeExport, options);
                 // END JsTree format
 
-                File.WriteAllText("./nodes-bulldog.json", json);
+                File.WriteAllText("./nodes-bulldog-threaded.json", json);
                 stopwatch.Stop();
                 Console.WriteLine($"Elapsed Time: {stopwatch.Elapsed.TotalMilliseconds} ms");
 
