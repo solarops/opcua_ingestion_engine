@@ -7,6 +7,7 @@ using Opc.Ua.Configuration;
 
 using System.Text.Json;
 using Aderis.OpcuaInjection.Models;
+using System.Diagnostics;
 
 public class LowercaseNamingPolicy : JsonNamingPolicy
 {
@@ -24,10 +25,16 @@ class Program
 
     // }
 
-    private static void DFS(Session session, ReferenceDescription rd, JsTreeNode currNode)
+    private static void DFS(Session session, ReferenceDescription rd, JsTreeNode currNode, List<string> exclusionFolders, int searchDepth)
     {
         // Already Variable or Object
         // if (rd.NodeClass == NodeClass.Variable || rd.NodeClass == NodeClass.Object)
+
+        // Keep first 3 (arbitrary) iterations/levels opened, then close all after.
+        if (searchDepth > 3)
+        {
+            currNode.State.Opened = false;
+        }
 
         ReferenceDescriptionCollection nextRefs;
         byte[] nextCp;
@@ -39,11 +46,22 @@ class Program
 
         foreach (var nextRd in nextRefs)
         {
+            string folderText = nextRd.DisplayName.Text;
+
             StringBuilder sb = new StringBuilder();
-            sb.Append(nextRd.DisplayName.Text);
+            sb.Append(folderText);
             sb.Append(" (");
             sb.Append(nextRd.NodeClass.ToString());
-            sb.Append(")");
+            sb.Append(" NodeClass)");
+
+            if (exclusionFolders.Contains(folderText))
+            {
+                // under the child nodes of the current node. If one of its children's title is in exclusionFolders, then skip that leaf of the tree. 
+                // Continue to next child.
+
+                // saves call to another DFS iteration
+                continue;
+            }
 
             // new Node
             JsTreeNode jsTreeNode = new JsTreeNode()
@@ -52,11 +70,12 @@ class Program
                 Id = nextRd.BrowseName.ToString()
             };
 
+
             currNode.Children.Add(jsTreeNode);
 
             // Search for children of current Node
             // nextRd and jsTreeNode are references to the same Node
-            DFS(session, nextRd, jsTreeNode);
+            DFS(session, nextRd, jsTreeNode, exclusionFolders, searchDepth + 1);
         }
         // return;
     }
@@ -64,8 +83,8 @@ class Program
     static async Task Main(string[] args)
     {
         // Define the server URL
-        string serverUrl = "opc.tcp://localhost:53530";
-        // string serverUrl = "opc.tcp://localhost:62541/discovery";
+        // string serverUrl = "opc.tcp://localhost:53530";
+        string serverUrl = "opc.tcp://localhost:62541/discovery";
 
         // EXAMPLE is for Anonymous user, no certificate
 
@@ -90,7 +109,13 @@ class Program
         // Discover available endpoints at the specified server URL
         // Console.WriteLine($"Discovering endpoints at {serverUrl}...");
 
-        List<ReferenceDescription> NodesToPoll = new();
+        List<ReferenceDescription> nodesToPoll = new();
+
+        List<string> browseExclusionFolders = new()
+        {
+            "Devices",
+            "Server"
+        };
 
         try
         {
@@ -121,7 +146,6 @@ class Program
 
                 NodeId objectsFolderId = ObjectIds.ObjectsFolder;
 
-
                 ReferenceDescriptionCollection refs;
                 Byte[] cp;
                 session.Browse(null, null, ObjectIds.ObjectsFolder, 0u, BrowseDirection.Forward, ReferenceTypeIds.HierarchicalReferences, true, (uint)NodeClass.Variable | (uint)NodeClass.Object | (uint)NodeClass.Method, out cp, out refs);
@@ -132,20 +156,33 @@ class Program
 
                 // TODO: evaluate searching algorithms for trees, need to pick NodeClass: Variable (not VariableType)
 
+                Stopwatch stopwatch = new Stopwatch();
+                stopwatch.Start();
                 // Setup 1st level of jsTreeExport
                 foreach (var rd in refs)
                 {
+                    string folderText = rd.DisplayName.Text;
+
+                    if (browseExclusionFolders.Contains(folderText))
+                    {
+                        // under the child nodes of the current node. If one of its children's title is in exclusionFolders, then skip that leaf of the tree. 
+                        // Continue to next child.
+
+                        // saves call to another function
+                        continue;
+                    }
+
                     // Top Level Objects, immediately add to jsTreeExport.Core.Data
                     JsTreeNode jsTreeNode = new JsTreeNode()
                     {
-                        Text = rd.DisplayName.Text,
+                        Text = folderText,
                         Id = rd.BrowseName.ToString()
                     };
 
                     jsTreeExport.Core.Data.Add(jsTreeNode);
 
                     // rd and jsTreeNode are references to the same Node
-                    DFS(session, rd, jsTreeNode);
+                    DFS(session, rd, jsTreeNode, browseExclusionFolders, 1);
                 }
 
                 Console.WriteLine("########################");
@@ -218,6 +255,8 @@ class Program
 
                 // END Custom
 
+
+                // BEGIN logic to write to JsTree format
                 var options = new JsonSerializerOptions()
                 {
                     PropertyNamingPolicy = new LowercaseNamingPolicy(),
@@ -225,8 +264,11 @@ class Program
                 };
 
                 string json = JsonSerializer.Serialize(jsTreeExport, options);
+                // END JsTree format
 
-                File.WriteAllText("./nodes.json", json);
+                File.WriteAllText("./nodes-bulldog.json", json);
+                stopwatch.Stop();
+                Console.WriteLine($"Elapsed Time: {stopwatch.Elapsed.TotalMilliseconds} ms");
 
                 // foreach (var node in NodesToPoll)
                 // {
