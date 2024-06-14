@@ -177,7 +177,7 @@ class Program
 
     static async Task Main(string[] args)
     {
-        await OpcuaSubscribe.OpcuaSubscribeStart();
+        await OpcuaSubscribe.Start();
 
         System.Environment.Exit(0);
 

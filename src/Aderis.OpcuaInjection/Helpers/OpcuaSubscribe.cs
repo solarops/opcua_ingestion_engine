@@ -13,14 +13,68 @@ namespace Aderis.OpcuaInjection.Helpers;
 
 public class OpcuaSubscribe
 {
-    private static string connectionString = "";
-    private static string SosConfigPrefix = "/opt/sos-config/";
+    private static FileSystemWatcher watcher= new();
+    private static CancellationTokenSource Cancellation = new();
+    private static readonly string SosConfigPrefix = "/opt/sos-config";
+    private static string ConnectionString = LoadConnectionString();
+    private static Dictionary<string, Dictionary<string, List<OpcTemplatePointConfiguration>>> OpcTemplates = LoadOpcTemplates();
+    private static OpcClientConfig OpcClientConfig = LoadClientConfig();
+    private static Dictionary<string, List<JSONGenericDevice>> SiteDevices = LoadSiteDevices();
+
+    private static Dictionary<string, Dictionary<string, List<OpcTemplatePointConfiguration>>> LoadOpcTemplates()
+    {
+        string rawTemplates = File.ReadAllText($"{SosConfigPrefix}/sos_templates_opcua.json");
+        return JsonSerializer.Deserialize<Dictionary<string, Dictionary<string, List<OpcTemplatePointConfiguration>>>>(rawTemplates);
+    }
+    private static OpcClientConfig LoadClientConfig()
+    {
+        string rawConfig = File.ReadAllText($"{SosConfigPrefix}/opcua_client_config.json");
+        return JsonSerializer.Deserialize<OpcClientConfig>(rawConfig);
+    }
+    private static Dictionary<string, List<JSONGenericDevice>> LoadSiteDevices()
+    {
+        string rawSiteDevices = File.ReadAllText($"{SosConfigPrefix}/site_devices.json");
+        return JsonSerializer.Deserialize<Dictionary<string, List<JSONGenericDevice>>>(rawSiteDevices);
+    }
+    private static string LoadConnectionString()
+    {
+        string plantConfig = File.ReadAllText($"{SosConfigPrefix}/plant_config.json");
+        MODBUSDBConfig dbConfig = JsonSerializer.Deserialize<MODBUSDBConfig>(plantConfig);
+        return dbConfig.Connection.ToConnectionString();
+    }
+
+    static void TemplateFileChanged(object source, FileSystemEventArgs e)
+    {
+        switch (e.Name)
+        {
+            case "sos_templates_opcua.json":
+                Console.WriteLine("Templates OPCUA Changed...");
+                OpcTemplates = LoadOpcTemplates();
+                goto case "CHANGED";
+            case "opcua_client_config.json":
+                Console.WriteLine("Client Config changed...");
+                OpcClientConfig = LoadClientConfig();
+                goto case "CHANGED";
+            case "site_devices.json":
+                Console.WriteLine("Devices changed...");
+                SiteDevices = LoadSiteDevices();
+                goto case "CHANGED";
+            // case "plant_config.json":
+            //     ConnectionString = LoadConnectionString();
+            // goto case "CHANGED";
+            case "CHANGED":
+                // Synchronously cancel
+                Cancellation.Cancel();
+                
+                break;
+        }
+    }
     static void SubscribedItemChange(MonitoredItem item, MonitoredItemNotificationEventArgs e)
     {
         // This will be an OPCMonitoredItem
         OPCMonitoredItem opcItem = (OPCMonitoredItem)item;
-        
-        using (var connection = new NpgsqlConnection(connectionString))
+
+        using (var connection = new NpgsqlConnection(ConnectionString))
         {
             connection.Open();
             foreach (var value in item.DequeueValues())
@@ -28,6 +82,20 @@ public class OpcuaSubscribe
                 DateTime parsedDateTime = DateTime.ParseExact(value.SourceTimestamp.ToString(), "M/d/yyyy h:mm:ss tt", CultureInfo.InvariantCulture);
                 try
                 {
+                    OpcTemplatePointConfiguration config = opcItem.Config;
+                    double scaledValue = Convert.ToDouble(value.Value);
+                    OpcTemplatePointConfigurationSlope AutoScaling = config.AutoScaling;
+
+                    switch (AutoScaling.ScaleMode)
+                    {
+                        case "slope_intercept":
+                            scaledValue = Math.Round((scaledValue * AutoScaling.Slope) + AutoScaling.Offset, 3);
+                            break;
+                        case "point_slope":
+                            scaledValue = Math.Round((AutoScaling.TargetMax - AutoScaling.TargetMin) / (AutoScaling.ValueMax - AutoScaling.ValueMin) * (scaledValue - AutoScaling.ValueMin) + AutoScaling.TargetMin, 3);
+                            break;
+                    }
+
                     string updateRowQuery = @"
                         UPDATE modvalues
                         SET 
@@ -35,13 +103,13 @@ public class OpcuaSubscribe
                             measure_value=@measureValue,
                             last_updated=@lastUpdated
                         WHERE device = @device AND measure_name = @measure";
-                    
+
                     using (var updateCommand = new NpgsqlCommand(updateRowQuery, connection))
                     {
                         updateCommand.Parameters.AddWithValue("device", opcItem.DaqName);
-                        updateCommand.Parameters.AddWithValue("measure", opcItem.Config.MeasureName);
-                        updateCommand.Parameters.AddWithValue("tagValue", value.Value);
-                        updateCommand.Parameters.AddWithValue("measureValue", value.Value);
+                        updateCommand.Parameters.AddWithValue("measure", config.MeasureName);
+                        updateCommand.Parameters.AddWithValue("tagValue", scaledValue);
+                        updateCommand.Parameters.AddWithValue("measureValue", scaledValue);
                         updateCommand.Parameters.AddWithValue("lastUpdated", value.SourceTimestamp.ToString("yyyy-MM-ddTHH:mm:ss.ffffff"));
 
                         updateCommand.ExecuteNonQuery();
@@ -56,29 +124,37 @@ public class OpcuaSubscribe
         }
     }
 
-    public static async Task OpcuaSubscribeStart()
+
+    public static async Task Start()
+    {
+        // Set the directory to monitor
+        watcher.Path = SosConfigPrefix;
+
+        // Watch for changes in LastWrite times, and the renaming of files or directories
+        watcher.NotifyFilter = NotifyFilters.LastWrite | NotifyFilters.DirectoryName;
+
+        // Only watch json files (you can modify this to watch other types of files)
+        watcher.Filter = "*.json";
+
+        // Add event handlers for each type of file change event
+        watcher.Changed += TemplateFileChanged;
+
+        // Begin watching
+        watcher.EnableRaisingEvents = true;
+
+        await OpcuaSubscribeStart();
+    }
+
+
+    private static async Task OpcuaSubscribeStart()
     {
         Dictionary<string, List<OPCMonitoredItem>> connectionPoints = new();
 
         // Get contents of the following: sos_templates_opcua, site_devices, plant_config (for db connection string), opcua_client_config.json
         try
         {
-            string rawTemplates = File.ReadAllText($"{SosConfigPrefix}/sos_templates_opcua.json");
-
-            Dictionary<string, Dictionary<string, List<OpcTemplatePointConfiguration>>> OpcTemplates = JsonSerializer.Deserialize<Dictionary<string, Dictionary<string, List<OpcTemplatePointConfiguration>>>>(rawTemplates);
-
-            string rawConfig = File.ReadAllText($"{SosConfigPrefix}/opcua_client_config.json");
-            OpcClientConfig opcClientConfig = JsonSerializer.Deserialize<OpcClientConfig>(rawConfig);
-
-            string rawSiteDevices = File.ReadAllText($"{SosConfigPrefix}/site_devices.json");
-            Dictionary<string, List<JSONGenericDevice>> siteDevices = JsonSerializer.Deserialize<Dictionary<string, List<JSONGenericDevice>>>(rawSiteDevices);
-
-            string plantConfig = File.ReadAllText($"{SosConfigPrefix}/plant_config.json");
-            MODBUSDBConfig dbConfig = JsonSerializer.Deserialize<MODBUSDBConfig>(plantConfig);
-            connectionString = dbConfig.Connection.ToConnectionString();
-
             // Check for existing table
-            using (var connection = new NpgsqlConnection(connectionString))
+            using (var connection = new NpgsqlConnection(ConnectionString))
             {
                 try
                 {
@@ -126,8 +202,6 @@ public class OpcuaSubscribe
                     {
                         Console.WriteLine("Table 'modvalues' already exists.");
                     }
-
-
                 }
                 catch (Exception ex)
                 {
@@ -136,13 +210,13 @@ public class OpcuaSubscribe
             }
 
             Dictionary<string, string> connectionUrls = new();
-            foreach (OpcClientConnection opcClientConnection in opcClientConfig.Connections)
+            foreach (OpcClientConnection opcClientConnection in OpcClientConfig.Connections)
             {
                 connectionPoints.Add(opcClientConnection.Url, []);
                 connectionUrls.Add(opcClientConnection.ConnectionName, opcClientConnection.Url);
             }
 
-            foreach ((string deviceType, List<JSONGenericDevice> deviceList) in siteDevices)
+            foreach ((string deviceType, List<JSONGenericDevice> deviceList) in SiteDevices)
             {
                 foreach (JSONGenericDevice device in deviceList)
                 {
@@ -153,7 +227,7 @@ public class OpcuaSubscribe
                         foreach (OpcTemplatePointConfiguration point in points)
                         {
 
-                            using (var connection = new NpgsqlConnection(connectionString))
+                            using (var connection = new NpgsqlConnection(ConnectionString))
                             {
                                 try
                                 {
@@ -241,6 +315,8 @@ public class OpcuaSubscribe
             Console.WriteLine($"Unexpected Exception Occurred when reading config files: {ex.Message}");
         }
 
+
+        List<Session> opcClients = new();
         foreach ((string serverUrl, List<OPCMonitoredItem> points) in connectionPoints)
         {
 
@@ -276,6 +352,7 @@ public class OpcuaSubscribe
                                                       60000,
                                                       new UserIdentity(new AnonymousIdentityToken()),
                                                       null);
+            opcClients.Add(session);
 
             var subscription = new Subscription()
             {
@@ -293,9 +370,33 @@ public class OpcuaSubscribe
 
         }
 
-        // wait for timeout or Ctrl-C
-        Console.WriteLine("Press any key to exit...");
-        Console.ReadKey();
+        try
+        {
+            while (true)
+            {
+                // Evaluate If has ben cancelled.
+                Cancellation.Token.ThrowIfCancellationRequested();
+                // 5s
+                Thread.Sleep(5000);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // Been cancelled.
+            foreach (Session session in opcClients)
+            {
+                session.Close();
+                session.Dispose();
+            }
+            
+            // Reset
+            Cancellation = new CancellationTokenSource();
+
+            // restart
+            // artificial 1s delay
+            await Task.Delay(1000);
+            await OpcuaSubscribeStart();
+        }
     }
 }
 
