@@ -30,8 +30,15 @@ public class JsTreeNode
 
     // Re-enable for Type plugin support
     // public required string Type { get; set; }
+    public JsTreeNodeData Data { get; set; } = new();
     public JsTreeNodeState State { get; set; } = new();
     public List<JsTreeNode> Children { get; set; } = [];
+}
+
+public class JsTreeNodeData
+{
+    public string Type { get; set; } = "Object";
+    public string Points_node_id { get; set; } = "";
 }
 
 public class JsTreeNodeState
