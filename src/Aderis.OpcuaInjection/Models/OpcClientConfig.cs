@@ -11,11 +11,13 @@ public class OpcClientConfig
 public class OpcClientConnection
 {
     [JsonPropertyName("connection_name")]
-    public required string ConnectionName { get; set; }
+    public required string ConnectionName { get; set; } = "";
     
     [JsonPropertyName("url")]
     public required string Url { get; set; }
     
     [JsonPropertyName("browse_exclusion_folders")]
     public required List<string> BrowseExclusionFolders { get; set; }
+    [JsonPropertyName("max_search")]
+    public required int MaxSearch { get; set; }
 }

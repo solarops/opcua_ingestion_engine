@@ -1,12 +1,10 @@
 #nullable disable
-using System.Threading;
 using System.Text.Json;
 using Aderis.OpcuaInjection.Models;
 using Opc.Ua;
 using Opc.Ua.Client;
 using Npgsql;
 
-using System.Diagnostics;
 using System.Globalization;
 
 namespace Aderis.OpcuaInjection.Helpers;
@@ -15,30 +13,25 @@ public class OpcuaSubscribe
 {
     private static FileSystemWatcher watcher= new();
     private static CancellationTokenSource Cancellation = new();
-    private static readonly string SosConfigPrefix = "/opt/sos-config";
     private static string ConnectionString = LoadConnectionString();
     private static Dictionary<string, Dictionary<string, List<OpcTemplatePointConfiguration>>> OpcTemplates = LoadOpcTemplates();
-    private static OpcClientConfig OpcClientConfig = LoadClientConfig();
+    private static OpcClientConfig OpcClientConfig = OpcuaHelperFunctions.LoadClientConfig();
     private static Dictionary<string, List<JSONGenericDevice>> SiteDevices = LoadSiteDevices();
 
     private static Dictionary<string, Dictionary<string, List<OpcTemplatePointConfiguration>>> LoadOpcTemplates()
     {
-        string rawTemplates = File.ReadAllText($"{SosConfigPrefix}/sos_templates_opcua.json");
+        string rawTemplates = File.ReadAllText($"{OpcuaHelperFunctions.SosConfigPrefix}/sos_templates_opcua.json");
         return JsonSerializer.Deserialize<Dictionary<string, Dictionary<string, List<OpcTemplatePointConfiguration>>>>(rawTemplates);
     }
-    private static OpcClientConfig LoadClientConfig()
-    {
-        string rawConfig = File.ReadAllText($"{SosConfigPrefix}/opcua_client_config.json");
-        return JsonSerializer.Deserialize<OpcClientConfig>(rawConfig);
-    }
+    
     private static Dictionary<string, List<JSONGenericDevice>> LoadSiteDevices()
     {
-        string rawSiteDevices = File.ReadAllText($"{SosConfigPrefix}/site_devices.json");
+        string rawSiteDevices = File.ReadAllText($"{OpcuaHelperFunctions.SosConfigPrefix}/site_devices.json");
         return JsonSerializer.Deserialize<Dictionary<string, List<JSONGenericDevice>>>(rawSiteDevices);
     }
     private static string LoadConnectionString()
     {
-        string plantConfig = File.ReadAllText($"{SosConfigPrefix}/plant_config.json");
+        string plantConfig = File.ReadAllText($"{OpcuaHelperFunctions.SosConfigPrefix}/plant_config.json");
         MODBUSDBConfig dbConfig = JsonSerializer.Deserialize<MODBUSDBConfig>(plantConfig);
         return dbConfig.Connection.ToConnectionString();
     }
@@ -53,7 +46,7 @@ public class OpcuaSubscribe
                 goto case "CHANGED";
             case "opcua_client_config.json":
                 Console.WriteLine("Client Config changed...");
-                OpcClientConfig = LoadClientConfig();
+                OpcClientConfig = OpcuaHelperFunctions.LoadClientConfig();
                 goto case "CHANGED";
             case "site_devices.json":
                 Console.WriteLine("Devices changed...");
@@ -128,7 +121,7 @@ public class OpcuaSubscribe
     public static async Task Start()
     {
         // Set the directory to monitor
-        watcher.Path = SosConfigPrefix;
+        watcher.Path = OpcuaHelperFunctions.SosConfigPrefix;
 
         // Watch for changes in LastWrite times, and the renaming of files or directories
         watcher.NotifyFilter = NotifyFilters.LastWrite | NotifyFilters.DirectoryName;
@@ -319,39 +312,7 @@ public class OpcuaSubscribe
         List<Session> opcClients = new();
         foreach ((string serverUrl, List<OPCMonitoredItem> points) in connectionPoints)
         {
-
-            var defaultConfig = new ApplicationConfiguration()
-            {
-                ApplicationName = "OPC UA Client",
-                ApplicationType = ApplicationType.Client,
-                SecurityConfiguration = new SecurityConfiguration
-                {
-                    AutoAcceptUntrustedCertificates = true,
-                    ApplicationCertificate = new CertificateIdentifier()
-                },
-                TransportConfigurations = new TransportConfigurationCollection(),
-                TransportQuotas = new TransportQuotas { OperationTimeout = 15000 },
-                ClientConfiguration = new ClientConfiguration { DefaultSessionTimeout = 60000 }
-            };
-
-            await defaultConfig.Validate(ApplicationType.Client);
-
-            // Select the endpoint with no security for simplicity
-            var selectedEndpoint = CoreClientUtils.SelectEndpoint(serverUrl, useSecurity: false, discoverTimeout: 5000);
-
-            // Output the selected endpoint details
-            Console.WriteLine($"Selected Endpoint: {selectedEndpoint.EndpointUrl}");
-            Console.WriteLine($"Security Mode: {selectedEndpoint.SecurityMode}");
-            Console.WriteLine($"Security Policy: {selectedEndpoint.SecurityPolicyUri}");
-
-            // Establish a session with the server
-            Session session = await Session.Create(defaultConfig,
-                                                      new ConfiguredEndpoint(null, selectedEndpoint, EndpointConfiguration.Create(defaultConfig)),
-                                                      false,
-                                                      "OPC UA Client Session",
-                                                      60000,
-                                                      new UserIdentity(new AnonymousIdentityToken()),
-                                                      null);
+            Session session = await OpcuaHelperFunctions.GetSessionByUrl(serverUrl);
             opcClients.Add(session);
 
             var subscription = new Subscription()
@@ -397,15 +358,5 @@ public class OpcuaSubscribe
             await Task.Delay(1000);
             await OpcuaSubscribeStart();
         }
-    }
-}
-
-
-public class LowercaseNamingPolicy : JsonNamingPolicy
-{
-    public override string ConvertName(string name)
-    {
-        // Convert the property name to lowercase
-        return name.ToLower();
     }
 }
