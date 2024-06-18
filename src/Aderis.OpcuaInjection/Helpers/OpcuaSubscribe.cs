@@ -12,7 +12,8 @@ namespace Aderis.OpcuaInjection.Helpers;
 public class OpcuaSubscribe
 {
     private static FileSystemWatcher watcher= new();
-    private static CancellationTokenSource Cancellation = new();
+    private static CancellationTokenSource FileSystemReloadCancel = new();
+    private static CancellationToken GlobalCancel = new();
     private static string ConnectionString = LoadConnectionString();
     private static Dictionary<string, Dictionary<string, List<OpcTemplatePointConfiguration>>> OpcTemplates = LoadOpcTemplates();
     private static OpcClientConfig OpcClientConfig = OpcuaHelperFunctions.LoadClientConfig();
@@ -57,7 +58,7 @@ public class OpcuaSubscribe
             // goto case "CHANGED";
             case "CHANGED":
                 // Synchronously cancel
-                Cancellation.Cancel();
+                FileSystemReloadCancel.Cancel();
                 
                 break;
         }
@@ -72,7 +73,6 @@ public class OpcuaSubscribe
             connection.Open();
             foreach (var value in item.DequeueValues())
             {
-                DateTime parsedDateTime = DateTime.ParseExact(value.SourceTimestamp.ToString(), "M/d/yyyy h:mm:ss tt", CultureInfo.InvariantCulture);
                 try
                 {
                     OpcTemplatePointConfiguration config = opcItem.Config;
@@ -97,6 +97,8 @@ public class OpcuaSubscribe
                             last_updated=@lastUpdated
                         WHERE device = @device AND measure_name = @measure";
 
+                    // Console.WriteLine(scaledValue);
+
                     using (var updateCommand = new NpgsqlCommand(updateRowQuery, connection))
                     {
                         updateCommand.Parameters.AddWithValue("device", opcItem.DaqName);
@@ -105,7 +107,9 @@ public class OpcuaSubscribe
                         updateCommand.Parameters.AddWithValue("measureValue", scaledValue);
                         updateCommand.Parameters.AddWithValue("lastUpdated", value.SourceTimestamp.ToString("yyyy-MM-ddTHH:mm:ss.ffffff"));
 
-                        updateCommand.ExecuteNonQuery();
+                        int affectedRows = updateCommand.ExecuteNonQuery();
+
+                        // Console.WriteLine(affectedRows);
                     }
                 }
                 catch (Exception ex)
@@ -118,8 +122,11 @@ public class OpcuaSubscribe
     }
 
 
-    public static async Task Start()
+    public static async Task Start(CancellationToken GlobalStop)
     {
+        // Register Passed 
+        GlobalCancel = GlobalStop;
+
         // Set the directory to monitor
         watcher.Path = OpcuaHelperFunctions.SosConfigPrefix;
 
@@ -336,12 +343,16 @@ public class OpcuaSubscribe
             while (true)
             {
                 // Evaluate If has ben cancelled.
-                Cancellation.Token.ThrowIfCancellationRequested();
+                FileSystemReloadCancel.Token.ThrowIfCancellationRequested();
+
+                // Global Reload, exit
+                GlobalCancel.ThrowIfCancellationRequested();
+
                 // 5s
                 Thread.Sleep(5000);
             }
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException ex)
         {
             // Been cancelled.
             foreach (Session session in opcClients)
@@ -349,9 +360,15 @@ public class OpcuaSubscribe
                 session.Close();
                 session.Dispose();
             }
+
+            if (ex.CancellationToken.Equals(GlobalCancel))
+            {
+                // Global Cancel
+                return;
+            }
             
             // Reset
-            Cancellation = new CancellationTokenSource();
+            FileSystemReloadCancel = new CancellationTokenSource();
 
             // restart
             // artificial 1s delay

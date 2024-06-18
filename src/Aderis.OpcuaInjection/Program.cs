@@ -1,35 +1,24 @@
+﻿
+using Aderis.OpcuaInjection.Interfaces;
+using Aderis.OpcuaInjection.Services;
 
-using Aderis.OpcuaInjection.Helpers;
+var builder = WebApplication.CreateBuilder(args);
 
-class Program
-{
-    static async Task Main(string[] args)
-    {
-        // await OpcuaSubscribe.Start();
+// Add services to the container.
+builder.Services.AddControllers();
 
-        // System.Environment.Exit(0);
+builder.Services.AddSingleton<IBrowseService, BrowseService>();
 
-        // Define the server URL
-        // string conn1 = "Prosys";
-        // string conn2 = "Ignition";
-        // await OpcuaBrowse.StartBrowse(conn1);
-        // await OpcuaBrowse.StartBrowse(conn2);
+builder.Services.AddHostedService<OpcSubscribeService>();
 
-        var builder = WebApplication.CreateBuilder(args);
+var app = builder.Build();
 
-        // Add services to the container.
-        builder.Services.AddControllers();
+// Configure the HTTP request pipeline.
 
-        var app = builder.Build();
+app.UseHttpsRedirection();
 
-        // Configure the HTTP request pipeline.
+app.UseAuthorization();
 
-        app.UseHttpsRedirection();
+app.MapControllers();
 
-        app.UseAuthorization();
-
-        app.MapControllers();
-
-        app.Run();
-    }
-}
+app.Run();

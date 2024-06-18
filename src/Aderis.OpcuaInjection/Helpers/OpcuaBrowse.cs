@@ -11,14 +11,18 @@ public class OpcuaBrowse
 {
     // Initiates a Browse function, saving the output under /opt/sos-config/opcua_nodes/<connection_name>.json
     private static readonly string SosNodesPrefix = "/opt/sos-config/opcua_nodes";
-    private static readonly OpcClientConfig OpcClientConfig = OpcuaHelperFunctions.LoadClientConfig();
-
-    private static CustomThreadPool customThreadPool = new CustomThreadPool();
-    private static readonly object __thread_lock = new();
-
-    private static void DFS_Threaded(Session session, ReferenceDescription rd, JsTreeNode currNode, List<string> exclusionFolders, int searchDepth)
+    
+    // Connection Specific
+    private OpcClientConnection opcClientConnection;
+    private CustomThreadPool customThreadPool;
+    private string _connectionId;
+    private CancellationToken _globalCancel;
+    private void DFS_Threaded(Session session, ReferenceDescription rd, JsTreeNode currNode, List<string> exclusionFolders, int searchDepth)
     {
-        static void Browse(Session session, ReferenceDescription rd, out ReferenceDescriptionCollection nextRefs, out byte[] nextCp)
+        // Global Cancel, begin scaffold return 
+        if (_globalCancel.IsCancellationRequested) return;
+
+        void Browse(Session session, ReferenceDescription rd, out ReferenceDescriptionCollection nextRefs, out byte[] nextCp)
         {
             session.Browse(
                             new RequestHeader()
@@ -134,13 +138,32 @@ public class OpcuaBrowse
         return;
     }
 
-    public static async Task StartBrowse(string connectionId)
+    public OpcuaBrowse(CancellationToken GlobalCancel, string connectionId)
     {
-        OpcClientConnection clientConnection = OpcClientConfig.Connections.Find(x => x.ConnectionName == connectionId) ?? throw new Exception($"Connection with ID '{connectionId}' not found.");
+        _connectionId = connectionId;
+        _globalCancel = GlobalCancel;
+        // BEGIN: Can move this to private setter? (For encapsulation)
+        OpcClientConfig clientConfig = OpcuaHelperFunctions.LoadClientConfig();
+        opcClientConnection = clientConfig.Connections.Find(x => x.ConnectionName == _connectionId) ?? throw new Exception($"Connection with ID '{_connectionId}' not found.");
+        // END
 
-        customThreadPool.MaxThreads = clientConnection.MaxSearch;
+        customThreadPool = new CustomThreadPool(new object(), opcClientConnection.MaxSearch);
+    }
+    public async Task<bool> StartBrowse()
+    {
+        string tempFilePath = $"{SosNodesPrefix}/temp_{_connectionId}.json";
+        
+        // consider instead exceptions here..
+        if (File.Exists(tempFilePath))
+        {
+            Console.WriteLine($"Browse job for {_connectionId} already exists..");
+            throw new Exception($"Browse job for {_connectionId} already exists..");
+        }
 
-        Session session = await OpcuaHelperFunctions.GetSessionByUrl(clientConnection.Url);
+        File.WriteAllText(tempFilePath, "");
+
+        // Get Fresh session
+        Session session = await OpcuaHelperFunctions.GetSessionByUrl(opcClientConnection.Url);
 
         JsTreeExport jsTreeExport = new();
 
@@ -171,7 +194,7 @@ public class OpcuaBrowse
         {
             string folderText = rd.DisplayName.Text;
 
-            if (clientConnection.BrowseExclusionFolders.Contains(folderText))
+            if (opcClientConnection.BrowseExclusionFolders.Contains(folderText))
             {
                 // under the child nodes of the current node. If one of its children's title is in exclusionFolders, then skip that leaf of the tree. 
                 // Continue to next child.
@@ -192,11 +215,11 @@ public class OpcuaBrowse
             // rd and jsTreeNode are references to the same Node
             try
             {
-                childThreads.Add(customThreadPool.AskForThread(() => DFS_Threaded(session, rd, jsTreeNode, clientConnection.BrowseExclusionFolders, 1)));
+                childThreads.Add(customThreadPool.AskForThread(() => DFS_Threaded(session, rd, jsTreeNode, opcClientConnection.BrowseExclusionFolders, 1)));
             }
             catch
             {
-                DFS_Threaded(session, rd, jsTreeNode, clientConnection.BrowseExclusionFolders, 1);
+                DFS_Threaded(session, rd, jsTreeNode, opcClientConnection.BrowseExclusionFolders, 1);
             }
 
         }
@@ -215,7 +238,7 @@ public class OpcuaBrowse
             WriteIndented = true
         });
 
-        string filePath = $"{SosNodesPrefix}/{connectionId}.json";
+        string filePath = $"{SosNodesPrefix}/{_connectionId}.json";
 
         string directoryPath = Path.GetDirectoryName(filePath) ?? throw new Exception($"Bad Path: {filePath}");
         if (!Directory.Exists(directoryPath))
@@ -226,6 +249,11 @@ public class OpcuaBrowse
         File.WriteAllText(filePath, json);
         stopwatch.Stop();
         Console.WriteLine($"Elapsed Time: {stopwatch.Elapsed.TotalMilliseconds} ms");
+
+        session.Close();
+        session.Dispose();
+
+        return true;
     }
 
     private class CustomThreadPool
@@ -242,15 +270,17 @@ public class OpcuaBrowse
                 maxThreads = value;
             }
         }
+        private object threadLock;
 
-        public CustomThreadPool(int maxThreads = 1)
+        public CustomThreadPool(object threadLock, int maxThreads = 1)
         {
             this.maxThreads = maxThreads;
+            this.threadLock = threadLock;
         }
 
         public Thread AskForThread(Action action)
         {
-            lock (__thread_lock)
+            lock (threadLock)
             {
                 if (activeThreadCount < maxThreads)
                 {
