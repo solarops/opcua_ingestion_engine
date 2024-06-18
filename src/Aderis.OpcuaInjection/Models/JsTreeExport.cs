@@ -1,12 +1,22 @@
 namespace Aderis.OpcuaInjection.Models;
 
+// Future: Consider a custom JSON encoder to write fields to needed structure, such as CheckCallback -> check_callback
+
 public class JsTreeExport
 {
     public JsCoreConfig Core { get; set; } = new();
 
     // types
 
-    public List<string> Plugins { get; set; } = new();
+    // add search automatically
+    public List<string> Plugins { get; set; } = ["search"];
+
+    public JsSearchSettings Search { get; set; } = new();
+}
+
+public class JsSearchSettings
+{
+    public bool Show_only_matches { get; set; } = true;
 }
 
 public class JsCoreConfig
