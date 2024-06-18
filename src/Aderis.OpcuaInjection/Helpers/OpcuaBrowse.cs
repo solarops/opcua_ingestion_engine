@@ -147,6 +147,8 @@ public class OpcuaBrowse
         opcClientConnection = clientConfig.Connections.Find(x => x.ConnectionName == _connectionId) ?? throw new Exception($"Connection with ID '{_connectionId}' not found.");
         // END
 
+        Console.WriteLine(opcClientConnection.MaxSearch);
+
         customThreadPool = new CustomThreadPool(new object(), opcClientConnection.MaxSearch);
     }
     public async Task<bool> StartBrowse()
@@ -237,6 +239,8 @@ public class OpcuaBrowse
             PropertyNamingPolicy = new OpcuaHelperFunctions.LowercaseNamingPolicy(),
             WriteIndented = true
         });
+
+        File.Delete(tempFilePath);
 
         string filePath = $"{SosNodesPrefix}/{_connectionId}.json";
 
