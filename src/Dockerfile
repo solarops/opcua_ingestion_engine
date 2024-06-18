@@ -18,4 +18,4 @@ RUN rm -rf /var/lib/apt/lists/*
 ENTRYPOINT ["dotnet", "Aderis.OpcuaInjection.dll"]
 
 #build example
-#docker build -t OpcuaInjection .
+#docker build -t opcuainjection:<tag> .
