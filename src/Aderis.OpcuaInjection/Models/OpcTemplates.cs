@@ -37,18 +37,18 @@ public class OpcTemplatePointConfigurationSlope
 
     // SlopeIntercept
     [JsonPropertyName("slope")]
-    public int Slope { get; set; } = 1;
+    public float Slope { get; set; } = 1;
     [JsonPropertyName("offset")]
-    public int Offset { get; set; } = 0;
+    public float Offset { get; set; } = 0;
 
 
     // PointSlope
     [JsonPropertyName("value_min")]
-    public int ValueMin { get; set; } = 0;
+    public float ValueMin { get; set; } = 0;
     [JsonPropertyName("value_max")]
-    public int ValueMax { get; set; } = 0;
+    public float ValueMax { get; set; } = 0;
     [JsonPropertyName("target_min")]
-    public int TargetMin { get; set; } = 0;
+    public float TargetMin { get; set; } = 0;
     [JsonPropertyName("target_max")]
-    public int TargetMax { get; set; } = 0;
+    public float TargetMax { get; set; } = 0;
 }
