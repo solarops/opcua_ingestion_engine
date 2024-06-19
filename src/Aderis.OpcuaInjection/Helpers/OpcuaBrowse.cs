@@ -159,6 +159,13 @@ public class OpcuaBrowse
             throw new Exception($"Browse job for {_connectionId} already exists..");
         }
 
+        string directoryPath = Path.GetDirectoryName(tempFilePath) ?? throw new Exception("filePath is null.");
+        
+        if (!Directory.Exists(directoryPath))
+        {
+            Directory.CreateDirectory(directoryPath);
+        }
+
         File.WriteAllText(tempFilePath, "");
 
         // Get Fresh session
@@ -242,12 +249,6 @@ public class OpcuaBrowse
         File.Delete(tempFilePath);
 
         string filePath = $"{SosNodesPrefix}/{_connectionId}.json";
-
-        string directoryPath = Path.GetDirectoryName(filePath) ?? throw new Exception($"Bad Path: {filePath}");
-        if (!Directory.Exists(directoryPath))
-        {
-            Directory.CreateDirectory(directoryPath);
-        }
 
         File.WriteAllText(filePath, json);
         stopwatch.Stop();

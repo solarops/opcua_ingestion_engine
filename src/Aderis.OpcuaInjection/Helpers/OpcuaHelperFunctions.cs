@@ -19,6 +19,13 @@ public class OpcuaHelperFunctions
     public static readonly string SosConfigPrefix = "/opt/sos-config";
     public static string GetFileTextLock(string filePath, int iteration = 0)
     {
+        string directoryPath = Path.GetDirectoryName(filePath) ?? throw new Exception("filePath is null.");
+        
+        if (!Directory.Exists(directoryPath))
+        {
+            Directory.CreateDirectory(directoryPath);
+        }
+
         if (iteration > 5) throw new Exception($"Could not acquire lock on {filePath}");
 
         try
