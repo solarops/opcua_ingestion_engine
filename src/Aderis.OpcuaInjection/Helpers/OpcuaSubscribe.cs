@@ -11,7 +11,7 @@ namespace Aderis.OpcuaInjection.Helpers;
 
 public class OpcuaSubscribe
 {
-    private static FileSystemWatcher watcher= new();
+    private static FileSystemWatcher watcher = new();
     private static CancellationTokenSource FileSystemReloadCancel = new();
     private static CancellationToken GlobalCancel = new();
     private static string ConnectionString = LoadConnectionString();
@@ -21,18 +21,18 @@ public class OpcuaSubscribe
 
     private static Dictionary<string, Dictionary<string, List<OpcTemplatePointConfiguration>>> LoadOpcTemplates()
     {
-        string rawTemplates = File.ReadAllText($"{OpcuaHelperFunctions.SosConfigPrefix}/sos_templates_opcua.json");
+        string rawTemplates = OpcuaHelperFunctions.GetFileTextLock($"{OpcuaHelperFunctions.SosConfigPrefix}/sos_templates_opcua.json");
         return JsonSerializer.Deserialize<Dictionary<string, Dictionary<string, List<OpcTemplatePointConfiguration>>>>(rawTemplates);
     }
-    
+
     private static Dictionary<string, List<JSONGenericDevice>> LoadSiteDevices()
     {
-        string rawSiteDevices = File.ReadAllText($"{OpcuaHelperFunctions.SosConfigPrefix}/site_devices.json");
+        string rawSiteDevices = OpcuaHelperFunctions.GetFileTextLock($"{OpcuaHelperFunctions.SosConfigPrefix}/site_devices.json");
         return JsonSerializer.Deserialize<Dictionary<string, List<JSONGenericDevice>>>(rawSiteDevices);
     }
     private static string LoadConnectionString()
     {
-        string plantConfig = File.ReadAllText($"{OpcuaHelperFunctions.SosConfigPrefix}/plant_config.json");
+        string plantConfig = OpcuaHelperFunctions.GetFileTextLock($"{OpcuaHelperFunctions.SosConfigPrefix}/plant_config.json");
         MODBUSDBConfig dbConfig = JsonSerializer.Deserialize<MODBUSDBConfig>(plantConfig);
         return dbConfig.Connection.ToConnectionString();
     }
@@ -59,7 +59,7 @@ public class OpcuaSubscribe
             case "CHANGED":
                 // Synchronously cancel
                 FileSystemReloadCancel.Cancel();
-                
+
                 break;
         }
     }
@@ -366,7 +366,7 @@ public class OpcuaSubscribe
                 // Global Cancel
                 return;
             }
-            
+
             // Reset
             FileSystemReloadCancel = new CancellationTokenSource();
 

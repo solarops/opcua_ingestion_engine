@@ -2,6 +2,7 @@ using Aderis.OpcuaInjection.Models;
 using Opc.Ua.Client;
 using Opc.Ua;
 using System.Text.Json;
+using System.Text;
 
 namespace Aderis.OpcuaInjection.Helpers;
 
@@ -16,9 +17,32 @@ public class OpcuaHelperFunctions
         }
     }
     public static readonly string SosConfigPrefix = "/opt/sos-config";
+    public static string GetFileTextLock(string filePath, int iteration=0)
+    {
+        if (iteration > 5) throw new Exception($"Could not acquire lock on {filePath}");
+
+        try
+        {
+            using (var fileStream = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.None))
+            {
+                // Read the contents of the file into a byte array
+                byte[] bytes = new byte[fileStream.Length];
+                fileStream.Read(bytes, 0, (int)fileStream.Length);
+
+                // Convert byte array to string using UTF-8 encoding
+                return Encoding.UTF8.GetString(bytes);
+            }
+        }
+        catch (IOException)
+        {
+            // Recursively Wait for 
+            Thread.Sleep(1500);
+            return GetFileTextLock(filePath, iteration+1);
+        }
+    }
     public static OpcClientConfig LoadClientConfig()
     {
-        string rawConfig = File.ReadAllText($"{SosConfigPrefix}/opcua_client_config.json");
+        string rawConfig = GetFileTextLock($"{SosConfigPrefix}/opcua_client_config.json");
         return JsonSerializer.Deserialize<OpcClientConfig>(rawConfig) ?? throw new Exception("Error unpacking opcua client config!");
     }
     public static async Task<Session> GetSessionByUrl(string connectionUrl)
