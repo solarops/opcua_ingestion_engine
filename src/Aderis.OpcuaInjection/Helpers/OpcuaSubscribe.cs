@@ -398,7 +398,7 @@ public class OpcuaSubscribe
             while (true)
             {
                 // Every 12th iteration of 5s (60s)
-                if (i == 2)
+                if (i == 12)
                 {
                     using (var connection = new NpgsqlConnection(ConnectionString))
                     {
