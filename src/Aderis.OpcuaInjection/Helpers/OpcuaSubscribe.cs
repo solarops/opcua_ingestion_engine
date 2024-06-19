@@ -26,18 +26,23 @@ public class OpcuaSubscribe
 
     private static Dictionary<string, Dictionary<string, List<OpcTemplatePointConfiguration>>> LoadOpcTemplates()
     {
-        string rawTemplates = OpcuaHelperFunctions.GetFileTextLock($"{OpcuaHelperFunctions.SosConfigPrefix}/sos_templates_opcua.json");
+        // string rawTemplates = OpcuaHelperFunctions.GetFileTextLock($"{OpcuaHelperFunctions.SosConfigPrefix}/sos_templates_opcua.json");
+        string rawTemplates = OpcuaHelperFunctions.GetFileContentsNoLock($"{OpcuaHelperFunctions.SosConfigPrefix}/sos_templates_opcua.json");
         return JsonSerializer.Deserialize<Dictionary<string, Dictionary<string, List<OpcTemplatePointConfiguration>>>>(rawTemplates);
     }
 
     private static Dictionary<string, List<JSONGenericDevice>> LoadSiteDevices()
     {
-        string rawSiteDevices = OpcuaHelperFunctions.GetFileTextLock($"{OpcuaHelperFunctions.SosConfigPrefix}/site_devices.json");
+        // string rawSiteDevices = OpcuaHelperFunctions.GetFileTextLock($"{OpcuaHelperFunctions.SosConfigPrefix}/site_devices.json");
+        
+        string rawSiteDevices = OpcuaHelperFunctions.GetFileContentsNoLock($"{OpcuaHelperFunctions.SosConfigPrefix}/site_devices.json");
+
         return JsonSerializer.Deserialize<Dictionary<string, List<JSONGenericDevice>>>(rawSiteDevices);
     }
     private static string LoadConnectionString()
     {
-        string plantConfig = OpcuaHelperFunctions.GetFileTextLock($"{OpcuaHelperFunctions.SosConfigPrefix}/plant_config.json");
+        // string plantConfig = OpcuaHelperFunctions.GetFileTextLock($"{OpcuaHelperFunctions.SosConfigPrefix}/plant_config.json");
+        string plantConfig = OpcuaHelperFunctions.GetFileContentsNoLock($"{OpcuaHelperFunctions.SosConfigPrefix}/plant_config.json");
         MODBUSDBConfig dbConfig = JsonSerializer.Deserialize<MODBUSDBConfig>(plantConfig);
         return dbConfig.Connection.ToConnectionString();
     }

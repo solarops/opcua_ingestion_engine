@@ -17,15 +17,10 @@ public class OpcuaHelperFunctions
         }
     }
     public static readonly string SosConfigPrefix = "/opt/sos-config";
+
+    // Alex - Will need to re-evaluate, do more testing on sites with Acuity
     public static string GetFileTextLock(string filePath, int iteration = 0)
     {
-        string directoryPath = Path.GetDirectoryName(filePath) ?? throw new Exception("filePath is null.");
-        
-        if (!Directory.Exists(directoryPath))
-        {
-            Directory.CreateDirectory(directoryPath);
-        }
-
         if (iteration > 5) throw new Exception($"Could not acquire lock on {filePath}");
 
         try
@@ -47,9 +42,28 @@ public class OpcuaHelperFunctions
             return GetFileTextLock(filePath, iteration + 1);
         }
     }
+
+    public static string GetFileContentsNoLock(string filePath, int iteration=0)
+    {
+        if (iteration > 5) throw new Exception($"Could not get Lock on {filePath}");
+        
+        if (!File.Exists(filePath)) throw new Exception($"Filepath {filePath} does not exist...");
+
+        try
+        {
+            return File.ReadAllText(filePath);
+        }
+        catch(IOException)
+        {
+            Thread.Sleep(1500);
+            return GetFileContentsNoLock(filePath, iteration+1);
+        }    
+    }
     public static OpcClientConfig LoadClientConfig()
     {
-        string rawConfig = GetFileTextLock($"{SosConfigPrefix}/opcua_client_config.json");
+        // string rawConfig = GetFileTextLock($"{SosConfigPrefix}/opcua_client_config.json");
+        string rawConfig = GetFileContentsNoLock($"{SosConfigPrefix}/opcua_client_config.json");
+        
         return JsonSerializer.Deserialize<OpcClientConfig>(rawConfig) ?? throw new Exception("Error unpacking opcua client config!");
     }
     public static async Task<Session> GetSessionByUrl(string connectionUrl, int iteration = 0)
