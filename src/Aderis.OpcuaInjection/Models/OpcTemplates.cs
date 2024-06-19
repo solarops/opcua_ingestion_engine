@@ -17,7 +17,7 @@ public enum ScaleModes
     point_slope
 }
 
-public class OpcTemplatePointConfiguration
+public class OpcTemplatePointConfigurationBase
 {
     [JsonPropertyName("unit")]
     public required string Unit { get; set; }
@@ -25,7 +25,10 @@ public class OpcTemplatePointConfiguration
     public required string TagName { get; set; }
     [JsonPropertyName("measure")]
     public required string MeasureName { get; set; }
+}
 
+public class OpcTemplatePointConfiguration : OpcTemplatePointConfigurationBase
+{
     [JsonPropertyName("autoScaling")]
     public required OpcTemplatePointConfigurationSlope AutoScaling { get; set; }
 }

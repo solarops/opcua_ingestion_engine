@@ -18,6 +18,12 @@ public class OpcuaSubscribe
     private static Dictionary<string, Dictionary<string, List<OpcTemplatePointConfiguration>>> OpcTemplates = LoadOpcTemplates();
     private static OpcClientConfig OpcClientConfig = OpcuaHelperFunctions.LoadClientConfig();
     private static Dictionary<string, List<JSONGenericDevice>> SiteDevices = LoadSiteDevices();
+    private static OpcTemplatePointConfigurationBase myPVOnlineTag = new OpcTemplatePointConfigurationBase()
+    {
+        Unit = "bool",
+        MeasureName = "myPV_online",
+        TagName = "myPV_online"
+    };
 
     private static Dictionary<string, Dictionary<string, List<OpcTemplatePointConfiguration>>> LoadOpcTemplates()
     {
@@ -71,52 +77,43 @@ public class OpcuaSubscribe
         using (var connection = new NpgsqlConnection(ConnectionString))
         {
             connection.Open();
-            foreach (var value in item.DequeueValues())
+            foreach (var value in opcItem.DequeueValues())
             {
-                try
+                string timestamp = value.SourceTimestamp.ToString("yyyy-MM-ddTHH:mm:ss.ffffff");
+                if (StatusCode.IsGood(value.StatusCode))
                 {
-                    OpcTemplatePointConfiguration config = opcItem.Config;
-                    double scaledValue = Convert.ToDouble(value.Value);
-                    OpcTemplatePointConfigurationSlope AutoScaling = config.AutoScaling;
-
-                    switch (AutoScaling.ScaleMode)
+                    try
                     {
-                        case "slope_intercept":
-                            scaledValue = Math.Round((scaledValue * AutoScaling.Slope) + AutoScaling.Offset, 3);
-                            break;
-                        case "point_slope":
-                            scaledValue = Math.Round((AutoScaling.TargetMax - AutoScaling.TargetMin) / (AutoScaling.ValueMax - AutoScaling.ValueMin) * (scaledValue - AutoScaling.ValueMin) + AutoScaling.TargetMin, 3);
-                            break;
+                        OpcTemplatePointConfiguration config = opcItem.Config;
+                        double scaledValue = Convert.ToDouble(value.Value);
+                        OpcTemplatePointConfigurationSlope AutoScaling = config.AutoScaling;
+
+                        switch (AutoScaling.ScaleMode)
+                        {
+                            case "slope_intercept":
+                                scaledValue = Math.Round((scaledValue * AutoScaling.Slope) + AutoScaling.Offset, 3);
+                                break;
+                            case "point_slope":
+                                scaledValue = Math.Round((AutoScaling.TargetMax - AutoScaling.TargetMin) / (AutoScaling.ValueMax - AutoScaling.ValueMin) * (scaledValue - AutoScaling.ValueMin) + AutoScaling.TargetMin, 3);
+                                break;
+                        }
+
+                        ModifyMeasure(connection, config.MeasureName, opcItem.DaqName, scaledValue, timestamp);
+
+                        // Got a new Measure, need to set myPV_online
+                        ModifyMeasure(connection, myPVOnlineTag.MeasureName, opcItem.DaqName, 1.0, timestamp);
                     }
-
-                    string updateRowQuery = @"
-                        UPDATE modvalues
-                        SET 
-                            tag_value=@tagValue, 
-                            measure_value=@measureValue,
-                            last_updated=@lastUpdated
-                        WHERE device = @device AND measure_name = @measure";
-
-                    // Console.WriteLine(scaledValue);
-
-                    using (var updateCommand = new NpgsqlCommand(updateRowQuery, connection))
+                    catch (Exception ex)
                     {
-                        updateCommand.Parameters.AddWithValue("device", opcItem.DaqName);
-                        updateCommand.Parameters.AddWithValue("measure", config.MeasureName);
-                        updateCommand.Parameters.AddWithValue("tagValue", scaledValue);
-                        updateCommand.Parameters.AddWithValue("measureValue", scaledValue);
-                        updateCommand.Parameters.AddWithValue("lastUpdated", value.SourceTimestamp.ToString("yyyy-MM-ddTHH:mm:ss.ffffff"));
-
-                        int affectedRows = updateCommand.ExecuteNonQuery();
-
-                        // Console.WriteLine(affectedRows);
+                        Console.WriteLine($"An Error occurred when saving device {opcItem.DaqName}, {opcItem.Config.MeasureName}: {ex}");
                     }
                 }
-                catch (Exception ex)
+                else
                 {
-                    Console.WriteLine($"An Error occurred when saving device {opcItem.DaqName}, {opcItem.Config.MeasureName}: {ex}");
-                    connection.Close();
+                    // Set online to false until we get another good update
+                    ModifyMeasure(connection, myPVOnlineTag.MeasureName, opcItem.DaqName, 0.0, timestamp);
                 }
+
             }
         }
     }
@@ -145,6 +142,86 @@ public class OpcuaSubscribe
         await OpcuaSubscribeStart();
     }
 
+    private static void ModifyMeasure(NpgsqlConnection connection, string measureName, string daqName, double scaledValue, string timestamp)
+    {
+        string updateRowQuery = @"
+                        UPDATE modvalues
+                        SET 
+                            tag_value=@tagValue, 
+                            measure_value=@measureValue,
+                            last_updated=@lastUpdated
+                        WHERE device = @device AND measure_name = @measure";
+
+        using (var updateCommand = new NpgsqlCommand(updateRowQuery, connection))
+        {
+            updateCommand.Parameters.AddWithValue("device", daqName);
+            updateCommand.Parameters.AddWithValue("measure", measureName);
+            updateCommand.Parameters.AddWithValue("tagValue", scaledValue);
+            updateCommand.Parameters.AddWithValue("measureValue", scaledValue);
+            updateCommand.Parameters.AddWithValue("lastUpdated", timestamp);
+
+            int affectedRows = updateCommand.ExecuteNonQuery();
+        }
+    }
+
+    private static void CheckAndAddMeasure(NpgsqlConnection connection, string deviceType, JSONGenericDevice device, OpcTemplatePointConfigurationBase point)
+    {
+        try
+        {
+            // Define the query to check if the row exists
+            string checkRowQuery = @"
+                                    SELECT 1
+                                    FROM modvalues
+                                    WHERE device = @device AND measure_name = @measure";
+
+            // Use parameterized query to avoid SQL injection
+            using (var command = new NpgsqlCommand(checkRowQuery, connection))
+            {
+                // Define parameters and assign values
+                command.Parameters.AddWithValue("device", device.DaqName);
+                command.Parameters.AddWithValue("measure", point.MeasureName);
+
+                // Execute the command and check for row existence
+                bool measuresRowExists = false;
+                using (var reader = command.ExecuteReader())
+                {
+                    measuresRowExists = reader.HasRows;
+                }
+
+                if (!measuresRowExists)
+                {
+                    DateTime utcNow = DateTime.UtcNow;
+
+                    // Format the DateTime to the desired format: yyyy-MM-ddTHH:mm:ss.ffffff
+                    string formattedUtcNow = utcNow.ToString("yyyy-MM-ddTHH:mm:ss.ffffff");
+
+                    string insertRowQuery = @"
+                            INSERT INTO modvalues (device, device_type, tag_name, tag_value, measure_name, measure_value, source_unit, destination_unit, last_updated, logging)
+                            VALUES (@device, @deviceType, @tagName, @tagValue, @measure, @measureValue, @sourceUnit, @destinationUnit, @lastUpdated, @logging)";
+
+                    using (var insertCommand = new NpgsqlCommand(insertRowQuery, connection))
+                    {
+                        insertCommand.Parameters.AddWithValue("device", device.DaqName);
+                        insertCommand.Parameters.AddWithValue("deviceType", deviceType);
+                        insertCommand.Parameters.AddWithValue("measure", point.MeasureName);
+                        insertCommand.Parameters.AddWithValue("tagName", point.TagName);
+                        insertCommand.Parameters.AddWithValue("tagValue", 0.0);
+                        insertCommand.Parameters.AddWithValue("measureValue", 0.0);
+                        insertCommand.Parameters.AddWithValue("sourceUnit", point.Unit);
+                        insertCommand.Parameters.AddWithValue("destinationUnit", point.Unit);
+                        insertCommand.Parameters.AddWithValue("lastUpdated", formattedUtcNow.ToString());
+                        insertCommand.Parameters.AddWithValue("logging", "instant");
+
+                        insertCommand.ExecuteNonQuery();
+                    }
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"An error occurred inserting row for {device.DaqName} and {point.MeasureName}: {ex.Message}");
+        }
+    }
 
     private static async Task OpcuaSubscribeStart()
     {
@@ -216,95 +293,48 @@ public class OpcuaSubscribe
                 connectionUrls.Add(opcClientConnection.ConnectionName, opcClientConnection.Url);
             }
 
-            foreach ((string deviceType, List<JSONGenericDevice> deviceList) in SiteDevices)
+            using (var connection = new NpgsqlConnection(ConnectionString))
             {
-                foreach (JSONGenericDevice device in deviceList)
+                // Open the connection
+                connection.Open();
+                foreach ((string deviceType, List<JSONGenericDevice> deviceList) in SiteDevices)
                 {
-                    if (device.Network.Params.Protocol == "OPCUA")
+                    foreach (JSONGenericDevice device in deviceList)
                     {
-                        List<OpcTemplatePointConfiguration> points = OpcTemplates[device.DeviceType][device.DaqTemplate];
-
-                        foreach (OpcTemplatePointConfiguration point in points)
+                        if (device.Network.Params.Protocol == "OPCUA")
                         {
+                            List<OpcTemplatePointConfiguration> points = OpcTemplates[device.DeviceType][device.DaqTemplate];
 
-                            using (var connection = new NpgsqlConnection(ConnectionString))
+                            // This tag includes add'l AutoScaling that is not require'd. Consider a different structure
+
+                            CheckAndAddMeasure(connection, deviceType, device, myPVOnlineTag);
+
+                            foreach (OpcTemplatePointConfiguration point in points)
                             {
-                                try
+                                CheckAndAddMeasure(connection, deviceType, device, point);
+
+                                OPCMonitoredItem oPCMonitoredItem = new()
                                 {
-                                    // Open the connection
-                                    connection.Open();
+                                    DaqName = device.DaqName,
+                                    Config = point,
+                                    StartNodeId = $"{device.Network.Params.PointNodeId}/{device.Network.Params.Prefix}{point.TagName}",
+                                    AttributeId = Attributes.Value,
+                                    DisplayName = point.TagName,
+                                    SamplingInterval = 3000,
+                                    QueueSize = 10,
+                                    DiscardOldest = true
+                                };
 
-                                    // Define the query to check if the row exists
-                                    string checkRowQuery = @"
-                                    SELECT 1
-                                    FROM modvalues
-                                    WHERE device = @device AND measure_name = @measure";
+                                oPCMonitoredItem.Notification += SubscribedItemChange;
 
-                                    // Use parameterized query to avoid SQL injection
-                                    using (var command = new NpgsqlCommand(checkRowQuery, connection))
-                                    {
-                                        // Define parameters and assign values
-                                        command.Parameters.AddWithValue("device", device.DaqName);
-                                        command.Parameters.AddWithValue("measure", point.MeasureName);
-
-                                        // Execute the command and check for row existence
-                                        bool rowExists = false;
-                                        using (var reader = command.ExecuteReader())
-                                        {
-                                            rowExists = reader.HasRows;
-                                        }
-
-                                        if (!rowExists)
-                                        {
-                                            DateTime utcNow = DateTime.UtcNow;
-
-                                            // Format the DateTime to the desired format: yyyy-MM-ddTHH:mm:ss.ffffff
-                                            string formattedUtcNow = utcNow.ToString("yyyy-MM-ddTHH:mm:ss.ffffff");
-
-                                            string insertRowQuery = @"
-                                                INSERT INTO modvalues (device, device_type, tag_name, tag_value, measure_name, measure_value, source_unit, destination_unit, last_updated, logging)
-                                                VALUES (@device, @deviceType, @tagName, @tagValue, @measure, @measureValue, @sourceUnit, @destinationUnit, @lastUpdated, @logging)";
-
-                                            using (var insertCommand = new NpgsqlCommand(insertRowQuery, connection))
-                                            {
-                                                insertCommand.Parameters.AddWithValue("device", device.DaqName);
-                                                insertCommand.Parameters.AddWithValue("deviceType", deviceType);
-                                                insertCommand.Parameters.AddWithValue("measure", point.MeasureName);
-                                                insertCommand.Parameters.AddWithValue("tagName", point.TagName);
-                                                insertCommand.Parameters.AddWithValue("tagValue", 0.0);
-                                                insertCommand.Parameters.AddWithValue("measureValue", 0.0);
-                                                insertCommand.Parameters.AddWithValue("sourceUnit", point.Unit);
-                                                insertCommand.Parameters.AddWithValue("destinationUnit", point.Unit);
-                                                insertCommand.Parameters.AddWithValue("lastUpdated", formattedUtcNow.ToString());
-                                                insertCommand.Parameters.AddWithValue("logging", "instant");
-
-                                                insertCommand.ExecuteNonQuery();
-                                            }
-                                        }
-                                    }
-                                }
-                                catch (Exception ex)
-                                {
-                                    Console.WriteLine($"An error occurred inserting row for {device.DaqName} and {point.MeasureName}: {ex.Message}");
-                                }
+                                string url = connectionUrls[device.Network.Params.Server];
+                                connectionPoints[url].Add(oPCMonitoredItem);
                             }
 
-                            OPCMonitoredItem oPCMonitoredItem = new()
-                            {
-                                DaqName = device.DaqName,
-                                Config = point,
-                                StartNodeId = $"{device.Network.Params.PointNodeId}/{device.Network.Params.Prefix}{point.TagName}",
-                                AttributeId = Attributes.Value,
-                                DisplayName = point.TagName,
-                                SamplingInterval = 3000,
-                                QueueSize = 10,
-                                DiscardOldest = true
-                            };
+                            string timestamp = DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ss.ffffff");
 
-                            oPCMonitoredItem.Notification += SubscribedItemChange;
-
-                            string url = connectionUrls[device.Network.Params.Server];
-                            connectionPoints[url].Add(oPCMonitoredItem);
+                            // Set online to false until we get an update
+                            ModifyMeasure(connection, myPVOnlineTag.MeasureName, device.DaqName, 0.0, timestamp);
                         }
                     }
                 }
@@ -319,22 +349,32 @@ public class OpcuaSubscribe
         List<Session> opcClients = new();
         foreach ((string serverUrl, List<OPCMonitoredItem> points) in connectionPoints)
         {
-            Session session = await OpcuaHelperFunctions.GetSessionByUrl(serverUrl);
-            opcClients.Add(session);
-
-            var subscription = new Subscription()
+            try
             {
-                DisplayName = $"Subscription to {serverUrl}",
-                PublishingEnabled = true,
-                PublishingInterval = 1000,
-                LifetimeCount = 0,
-                MinLifetimeInterval = 120_000,
-            };
+                Session session = await OpcuaHelperFunctions.GetSessionByUrl(serverUrl);
 
-            session.AddSubscription(subscription);
-            subscription.Create();
-            subscription.AddItems(points);
-            subscription.ApplyChanges();
+                opcClients.Add(session);
+
+                var subscription = new Subscription()
+                {
+                    DisplayName = $"Subscription to {serverUrl}",
+                    PublishingEnabled = true,
+                    PublishingInterval = 1000,
+                    LifetimeCount = 0,
+                    MinLifetimeInterval = 120_000,
+                };
+
+                session.AddSubscription(subscription);
+                subscription.Create();
+                subscription.AddItems(points);
+                subscription.ApplyChanges();
+
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine(ex.Message);
+                continue;
+            }
 
         }
 
