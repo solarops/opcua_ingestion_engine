@@ -4,8 +4,7 @@ using Aderis.OpcuaInjection.Models;
 using Opc.Ua;
 using Opc.Ua.Client;
 using Npgsql;
-
-using System.Globalization;
+using System.Data;
 
 namespace Aderis.OpcuaInjection.Helpers;
 
@@ -79,6 +78,7 @@ public class OpcuaSubscribe
             connection.Open();
             foreach (var value in opcItem.DequeueValues())
             {
+
                 string timestamp = value.SourceTimestamp.ToString("yyyy-MM-ddTHH:mm:ss.ffffff");
                 OpcTemplatePointConfiguration config = opcItem.Config;
                 if (StatusCode.IsGood(value.StatusCode))
@@ -318,6 +318,13 @@ public class OpcuaSubscribe
                             {
                                 CheckAndAddMeasure(connection, deviceType, device, point);
 
+                                // Define the data change filter
+                                var dataChangeFilter = new DataChangeFilter
+                                {
+                                    Trigger = DataChangeTrigger.StatusValueTimestamp,
+                                    DeadbandType = (uint)DeadbandType.None
+                                };
+
                                 OPCMonitoredItem oPCMonitoredItem = new()
                                 {
                                     DaqName = device.DaqName,
@@ -325,9 +332,11 @@ public class OpcuaSubscribe
                                     StartNodeId = $"{device.Network.Params.PointNodeId}/{device.Network.Params.Prefix}{point.TagName}",
                                     AttributeId = Attributes.Value,
                                     DisplayName = point.TagName,
-                                    SamplingInterval = 3000,
+                                    SamplingInterval = 5000,
                                     QueueSize = 10,
-                                    DiscardOldest = true
+                                    DiscardOldest = true,
+                                    MonitoringMode = MonitoringMode.Reporting,
+                                    Filter = dataChangeFilter
                                 };
 
                                 oPCMonitoredItem.Notification += SubscribedItemChange;
@@ -385,15 +394,55 @@ public class OpcuaSubscribe
 
         try
         {
+            int i = 1;
             while (true)
             {
+                // Every 12th iteration of 5s (60s)
+                if (i == 2)
+                {
+                    using (var connection = new NpgsqlConnection(ConnectionString))
+                    {
+                        connection.Open();
+
+                        using (var transaction = connection.BeginTransaction(IsolationLevel.ReadCommitted))
+                        {
+                            try
+                            {
+                                string lockQuery = "SELECT * FROM modvalues FOR UPDATE";
+                                using (var lockCommand = new NpgsqlCommand(lockQuery, connection, transaction))
+                                {
+                                    lockCommand.ExecuteNonQuery();
+                                }
+
+                                string updateQuery = "UPDATE modvalues SET last_updated = @currentTime";
+                                using (var updateCommand = new NpgsqlCommand(updateQuery, connection, transaction))
+                                {
+                                    // Use parameterized query to prevent SQL injection
+                                    updateCommand.Parameters.AddWithValue("currentTime", DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ss.ffffff"));
+
+                                    int rowsAffected = updateCommand.ExecuteNonQuery();
+                                }
+
+                                transaction.Commit();
+                            }
+                            catch (Exception ex)
+                            {
+                                Console.WriteLine($"An Error occurred when attempting to migrate datetimes: {ex.Message}");
+                                transaction.Rollback();
+                            }
+                        }
+                    }
+                    // reset
+                    i = 1;
+                }
+
                 // Evaluate If has ben cancelled.
                 FileSystemReloadCancel.Token.ThrowIfCancellationRequested();
 
                 // Global Reload, exit
                 GlobalCancel.ThrowIfCancellationRequested();
 
-                // 5s
+                i += 1;
                 Thread.Sleep(5000);
             }
         }
