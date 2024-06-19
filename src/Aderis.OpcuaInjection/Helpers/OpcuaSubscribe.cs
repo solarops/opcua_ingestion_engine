@@ -80,11 +80,11 @@ public class OpcuaSubscribe
             foreach (var value in opcItem.DequeueValues())
             {
                 string timestamp = value.SourceTimestamp.ToString("yyyy-MM-ddTHH:mm:ss.ffffff");
+                OpcTemplatePointConfiguration config = opcItem.Config;
                 if (StatusCode.IsGood(value.StatusCode))
                 {
                     try
                     {
-                        OpcTemplatePointConfiguration config = opcItem.Config;
                         double scaledValue = Convert.ToDouble(value.Value);
                         OpcTemplatePointConfigurationSlope AutoScaling = config.AutoScaling;
 
@@ -112,6 +112,9 @@ public class OpcuaSubscribe
                 {
                     // Set online to false until we get another good update
                     ModifyMeasure(connection, myPVOnlineTag.MeasureName, opcItem.DaqName, 0.0, timestamp);
+
+                    // value is null
+                    ModifyMeasure(connection, config.MeasureName, opcItem.DaqName, null, timestamp);
                 }
 
             }
@@ -142,8 +145,10 @@ public class OpcuaSubscribe
         await OpcuaSubscribeStart();
     }
 
-    private static void ModifyMeasure(NpgsqlConnection connection, string measureName, string daqName, double scaledValue, string timestamp)
+    private static void ModifyMeasure(NpgsqlConnection connection, string measureName, string daqName, object scaledValue, string timestamp)
     {
+        if (scaledValue == null) scaledValue = DBNull.Value;
+
         string updateRowQuery = @"
                         UPDATE modvalues
                         SET 

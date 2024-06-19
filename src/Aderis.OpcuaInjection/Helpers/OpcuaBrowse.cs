@@ -54,7 +54,6 @@ public class OpcuaBrowse
 
             // Will be "Object" or "Variable"
             currNode.Data.Type = rd.NodeClass.ToString();
-            currNode.Data.Points_node_id = rd.NodeId.ToString();
 
             ReferenceDescriptionCollection nextRefs;
             byte[] nextCp;
@@ -91,7 +90,7 @@ public class OpcuaBrowse
                 JsTreeNode jsTreeNode = new JsTreeNode()
                 {
                     Text = folderText,
-                    Id = nextRd.BrowseName.ToString()
+                    Id = nextRd.NodeId.ToString()
                 };
 
                 currNode.Children.Add(jsTreeNode);
@@ -203,11 +202,13 @@ public class OpcuaBrowse
                 continue;
             }
 
+            // TODO
+
             // Top Level Objects, immediately add to jsTreeExport.Core.Data
             JsTreeNode jsTreeNode = new JsTreeNode()
             {
                 Text = folderText,
-                Id = rd.BrowseName.ToString()
+                Id = rd.NodeId.ToString()
             };
 
             jsTreeExport.Core.Data.Add(jsTreeNode);

@@ -48,7 +48,6 @@ public class JsTreeNode
 public class JsTreeNodeData
 {
     public string Type { get; set; } = "Object";
-    public string Points_node_id { get; set; } = "";
 }
 
 public class JsTreeNodeState
