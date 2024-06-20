@@ -51,11 +51,13 @@ public class OpcuaHelperFunctions
 
         try
         {
-            return File.ReadAllText(filePath);
+            string text = File.ReadAllText(filePath);
+            if (text.Length < 1) throw new Exception("empty file...");
+            return text;
         }
         catch (Exception)
         {
-            Thread.Sleep(1000);
+            Thread.Sleep(500);
             return GetFileContentsNoLock(filePath, iteration+1);
         }    
     }
