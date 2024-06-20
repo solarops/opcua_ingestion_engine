@@ -51,6 +51,7 @@ public class OpcuaSubscribe
         catch (Exception ex)
         {
             Console.WriteLine($"Deserialization error: {ex.Message}");
+            Console.WriteLine($"rawSiteDevices: {rawSiteDevices}");
             // Handle the exception or rethrow it
             throw;
         }

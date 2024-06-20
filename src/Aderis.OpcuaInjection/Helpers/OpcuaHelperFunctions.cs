@@ -53,9 +53,9 @@ public class OpcuaHelperFunctions
         {
             return File.ReadAllText(filePath);
         }
-        catch(IOException)
+        catch (Exception)
         {
-            Thread.Sleep(1500);
+            Thread.Sleep(1000);
             return GetFileContentsNoLock(filePath, iteration+1);
         }    
     }
