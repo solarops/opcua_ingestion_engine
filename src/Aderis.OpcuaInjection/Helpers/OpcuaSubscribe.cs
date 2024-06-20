@@ -5,6 +5,7 @@ using Opc.Ua;
 using Opc.Ua.Client;
 using Npgsql;
 using System.Data;
+using System.Text.Json.Serialization;
 
 namespace Aderis.OpcuaInjection.Helpers;
 
@@ -34,10 +35,26 @@ public class OpcuaSubscribe
     private static Dictionary<string, List<JSONGenericDevice>> LoadSiteDevices()
     {
         // string rawSiteDevices = OpcuaHelperFunctions.GetFileTextLock($"{OpcuaHelperFunctions.SosConfigPrefix}/site_devices.json");
-        
+
+        var options = new JsonSerializerOptions()
+        {
+            PropertyNameCaseInsensitive = true,
+            DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
+        };
+
         string rawSiteDevices = OpcuaHelperFunctions.GetFileContentsNoLock($"{OpcuaHelperFunctions.SosConfigPrefix}/site_devices.json");
         Console.WriteLine("Got lock on siteDevices!");
-        return JsonSerializer.Deserialize<Dictionary<string, List<JSONGenericDevice>>>(rawSiteDevices);
+        try
+        {
+            return JsonSerializer.Deserialize<Dictionary<string, List<JSONGenericDevice>>>(rawSiteDevices, options);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Deserialization error: {ex.Message}");
+            // Handle the exception or rethrow it
+            throw;
+        }
+
     }
     private static string LoadConnectionString()
     {
