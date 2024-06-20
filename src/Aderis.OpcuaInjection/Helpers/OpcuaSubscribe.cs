@@ -85,14 +85,14 @@ public class OpcuaSubscribe
             case "site_devices.json":
                 Console.WriteLine("Devices changed...");
                 SiteDevices = LoadSiteDevices();
-                Console.WriteLine("Deserialized SiteDevices...");
+                // Console.WriteLine("Deserialized SiteDevices...");
                 goto case "CHANGED";
             // case "plant_config.json":
             //     ConnectionString = LoadConnectionString();
             // goto case "CHANGED";
             case "CHANGED":
                 // Synchronously cancel
-                Console.WriteLine("Cancelling...");
+                // Console.WriteLine("Cancelling...");
                 FileSystemReloadCancel.Cancel();
 
                 break;
@@ -494,7 +494,7 @@ public class OpcuaSubscribe
             // Reset
             FileSystemReloadCancel = new CancellationTokenSource();
 
-            Console.WriteLine("Resetting....");
+            // Console.WriteLine("Resetting....");
 
             // restart
             // artificial 1s delay
