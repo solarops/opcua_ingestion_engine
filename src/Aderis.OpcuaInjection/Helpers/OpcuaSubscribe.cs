@@ -36,7 +36,7 @@ public class OpcuaSubscribe
         // string rawSiteDevices = OpcuaHelperFunctions.GetFileTextLock($"{OpcuaHelperFunctions.SosConfigPrefix}/site_devices.json");
         
         string rawSiteDevices = OpcuaHelperFunctions.GetFileContentsNoLock($"{OpcuaHelperFunctions.SosConfigPrefix}/site_devices.json");
-
+        Console.WriteLine("Got lock on siteDevices!");
         return JsonSerializer.Deserialize<Dictionary<string, List<JSONGenericDevice>>>(rawSiteDevices);
     }
     private static string LoadConnectionString()
@@ -62,12 +62,14 @@ public class OpcuaSubscribe
             case "site_devices.json":
                 Console.WriteLine("Devices changed...");
                 SiteDevices = LoadSiteDevices();
+                Console.WriteLine("Deserialized SiteDevices...");
                 goto case "CHANGED";
             // case "plant_config.json":
             //     ConnectionString = LoadConnectionString();
             // goto case "CHANGED";
             case "CHANGED":
                 // Synchronously cancel
+                Console.WriteLine("Cancelling...");
                 FileSystemReloadCancel.Cancel();
 
                 break;
@@ -468,6 +470,8 @@ public class OpcuaSubscribe
 
             // Reset
             FileSystemReloadCancel = new CancellationTokenSource();
+
+            Console.WriteLine("Resetting....");
 
             // restart
             // artificial 1s delay
