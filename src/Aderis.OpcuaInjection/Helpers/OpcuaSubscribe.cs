@@ -25,16 +25,9 @@ public class OpcuaSubscribe
         TagName = "myPV_online"
     };
 
-    private static Dictionary<string, Dictionary<string, List<OpcTemplatePointConfiguration>>> LoadOpcTemplates()
+    private static T DeserializeJson<T>(string filePath, int iteration = 1)
     {
-        // string rawTemplates = OpcuaHelperFunctions.GetFileTextLock($"{OpcuaHelperFunctions.SosConfigPrefix}/sos_templates_opcua.json");
-        string rawTemplates = OpcuaHelperFunctions.GetFileContentsNoLock($"{OpcuaHelperFunctions.SosConfigPrefix}/sos_templates_opcua.json");
-        return JsonSerializer.Deserialize<Dictionary<string, Dictionary<string, List<OpcTemplatePointConfiguration>>>>(rawTemplates);
-    }
-
-    private static Dictionary<string, List<JSONGenericDevice>> LoadSiteDevices()
-    {
-        // string rawSiteDevices = OpcuaHelperFunctions.GetFileTextLock($"{OpcuaHelperFunctions.SosConfigPrefix}/site_devices.json");
+        if (iteration > 5) throw new Exception("Deserialize Error!");
 
         var options = new JsonSerializerOptions()
         {
@@ -42,26 +35,38 @@ public class OpcuaSubscribe
             DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
         };
 
-        string rawSiteDevices = OpcuaHelperFunctions.GetFileContentsNoLock($"{OpcuaHelperFunctions.SosConfigPrefix}/site_devices.json");
-        Console.WriteLine("Got lock on siteDevices!");
         try
         {
-            return JsonSerializer.Deserialize<Dictionary<string, List<JSONGenericDevice>>>(rawSiteDevices, options);
+            string rawOutput = OpcuaHelperFunctions.GetFileContentsNoLock(filePath);
+            return JsonSerializer.Deserialize<T>(rawOutput, options);
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"Deserialization error: {ex.Message}");
-            Console.WriteLine($"rawSiteDevices: {rawSiteDevices}");
-            // Handle the exception or rethrow it
-            throw;
+            Console.WriteLine($"Error when attempting to get and deserialize {filePath}: {ex}");
+            Thread.Sleep(500);
+            return DeserializeJson<T>(filePath, iteration + 1);
         }
+    }
 
+    private static Dictionary<string, Dictionary<string, List<OpcTemplatePointConfiguration>>> LoadOpcTemplates()
+    {
+        // string rawTemplates = OpcuaHelperFunctions.GetFileTextLock($"{OpcuaHelperFunctions.SosConfigPrefix}/sos_templates_opcua.json");
+        return DeserializeJson<Dictionary<string, Dictionary<string, List<OpcTemplatePointConfiguration>>>>($"{OpcuaHelperFunctions.SosConfigPrefix}/sos_templates_opcua.json");
+        
+    }
+
+    private static Dictionary<string, List<JSONGenericDevice>> LoadSiteDevices()
+    {
+        // string rawSiteDevices = OpcuaHelperFunctions.GetFileTextLock($"{OpcuaHelperFunctions.SosConfigPrefix}/site_devices.json");
+        return DeserializeJson<Dictionary<string, List<JSONGenericDevice>>>($"{OpcuaHelperFunctions.SosConfigPrefix}/site_devices.json");
     }
     private static string LoadConnectionString()
     {
         // string plantConfig = OpcuaHelperFunctions.GetFileTextLock($"{OpcuaHelperFunctions.SosConfigPrefix}/plant_config.json");
-        string plantConfig = OpcuaHelperFunctions.GetFileContentsNoLock($"{OpcuaHelperFunctions.SosConfigPrefix}/plant_config.json");
-        MODBUSDBConfig dbConfig = JsonSerializer.Deserialize<MODBUSDBConfig>(plantConfig);
+        // string plantConfig = OpcuaHelperFunctions.GetFileContentsNoLock($"{OpcuaHelperFunctions.SosConfigPrefix}/plant_config.json");
+        // MODBUSDBConfig dbConfig = JsonSerializer.Deserialize<MODBUSDBConfig>(plantConfig);
+
+        MODBUSDBConfig dbConfig = DeserializeJson<MODBUSDBConfig>($"{OpcuaHelperFunctions.SosConfigPrefix}/plant_config.json");
         return dbConfig.Connection.ToConnectionString();
     }
 
@@ -495,6 +500,19 @@ public class OpcuaSubscribe
             // artificial 1s delay
             await Task.Delay(1000);
             await OpcuaSubscribeStart();
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Process Crashed! {ex}");
+            Console.WriteLine(ex.StackTrace);
+            // any other exception
+            foreach (Session session in opcClients)
+            {
+                session.Close();
+                session.Dispose();
+            }
+
+            return;
         }
     }
 }
