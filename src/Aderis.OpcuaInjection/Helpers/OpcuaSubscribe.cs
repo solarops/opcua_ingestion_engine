@@ -52,7 +52,7 @@ public class OpcuaSubscribe
     {
         // string rawTemplates = OpcuaHelperFunctions.GetFileTextLock($"{OpcuaHelperFunctions.SosConfigPrefix}/sos_templates_opcua.json");
         return DeserializeJson<Dictionary<string, Dictionary<string, List<OpcTemplatePointConfiguration>>>>($"{OpcuaHelperFunctions.SosConfigPrefix}/sos_templates_opcua.json");
-        
+
     }
 
     private static Dictionary<string, List<JSONGenericDevice>> LoadSiteDevices()
@@ -338,47 +338,55 @@ public class OpcuaSubscribe
                     {
                         if (device.Network.Params.Protocol == "OPCUA")
                         {
-                            List<OpcTemplatePointConfiguration> points = OpcTemplates[device.DeviceType][device.DaqTemplate];
-
-                            // This tag includes add'l AutoScaling that is not require'd. Consider a different structure
-
-                            CheckAndAddMeasure(connection, deviceType, device, myPVOnlineTag);
-
-                            foreach (OpcTemplatePointConfiguration point in points)
+                            try
                             {
-                                CheckAndAddMeasure(connection, deviceType, device, point);
+                                List<OpcTemplatePointConfiguration> points = OpcTemplates[device.DeviceType][device.DaqTemplate];
 
-                                // Define the data change filter
-                                var dataChangeFilter = new DataChangeFilter
+                                // This tag includes add'l AutoScaling that is not require'd. Consider a different structure
+
+                                CheckAndAddMeasure(connection, deviceType, device, myPVOnlineTag);
+
+                                foreach (OpcTemplatePointConfiguration point in points)
                                 {
-                                    Trigger = DataChangeTrigger.StatusValueTimestamp,
-                                    DeadbandType = (uint)DeadbandType.None
-                                };
+                                    CheckAndAddMeasure(connection, deviceType, device, point);
 
-                                OPCMonitoredItem oPCMonitoredItem = new()
-                                {
-                                    DaqName = device.DaqName,
-                                    Config = point,
-                                    StartNodeId = $"{device.Network.Params.PointNodeId}/{device.Network.Params.Prefix}{point.TagName}",
-                                    AttributeId = Attributes.Value,
-                                    DisplayName = point.TagName,
-                                    SamplingInterval = 5000,
-                                    QueueSize = 10,
-                                    DiscardOldest = true,
-                                    MonitoringMode = MonitoringMode.Reporting,
-                                    Filter = dataChangeFilter
-                                };
+                                    // Define the data change filter
+                                    var dataChangeFilter = new DataChangeFilter
+                                    {
+                                        Trigger = DataChangeTrigger.StatusValueTimestamp,
+                                        DeadbandType = (uint)DeadbandType.None
+                                    };
 
-                                oPCMonitoredItem.Notification += SubscribedItemChange;
+                                    OPCMonitoredItem oPCMonitoredItem = new()
+                                    {
+                                        DaqName = device.DaqName,
+                                        Config = point,
+                                        StartNodeId = $"{device.Network.Params.PointNodeId}/{device.Network.Params.Prefix}{point.TagName}",
+                                        AttributeId = Attributes.Value,
+                                        DisplayName = point.TagName,
+                                        SamplingInterval = 5000,
+                                        QueueSize = 10,
+                                        DiscardOldest = true,
+                                        MonitoringMode = MonitoringMode.Reporting,
+                                        Filter = dataChangeFilter
+                                    };
 
-                                string url = connectionUrls[device.Network.Params.Server];
-                                connectionPoints[url].Add(oPCMonitoredItem);
+                                    oPCMonitoredItem.Notification += SubscribedItemChange;
+
+                                    string url = connectionUrls[device.Network.Params.Server];
+                                    connectionPoints[url].Add(oPCMonitoredItem);
+                                }
+
+                                string timestamp = DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ss.ffffff");
+
+                                // Set online to false until we get an update
+                                ModifyMeasure(connection, myPVOnlineTag.MeasureName, device.DaqName, 0.0, timestamp);
                             }
-
-                            string timestamp = DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ss.ffffff");
-
-                            // Set online to false until we get an update
-                            ModifyMeasure(connection, myPVOnlineTag.MeasureName, device.DaqName, 0.0, timestamp);
+                            catch (Exception ex)
+                            {
+                                Console.WriteLine($"Unexpected Exception Occurred for OPCUA Device {device.DaqName}: {ex.Message}");
+                                continue;
+                            }
                         }
                     }
                 }
