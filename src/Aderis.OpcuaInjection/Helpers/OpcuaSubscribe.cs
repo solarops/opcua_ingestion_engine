@@ -111,7 +111,7 @@ public class OpcuaSubscribe
 
                 string timestamp = value.SourceTimestamp.ToString("yyyy-MM-ddTHH:mm:ss.ffffff");
                 OpcTemplatePointConfiguration config = opcItem.Config;
-                if (StatusCode.IsGood(value.StatusCode))
+                if (StatusCode.IsGood(value.StatusCode) && Math.Abs((DateTime.UtcNow - value.SourceTimestamp).TotalSeconds) <= 60)
                 {
                     try
                     {
