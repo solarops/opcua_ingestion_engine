@@ -20,4 +20,6 @@ public class OpcClientConnection
     public required List<string> BrowseExclusionFolders { get; set; }
     [JsonPropertyName("max_search")]
     public required int MaxSearch { get; set; }
+    [JsonPropertyName("staleness_timeout_ms")]
+    public required int TimeoutMs { get; set; }
 }

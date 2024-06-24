@@ -54,3 +54,8 @@ public class OPCMonitoredItem : MonitoredItem
     // Includes Unit, TagName, MeasureName, ScaleMode
     public required OpcTemplatePointConfiguration Config { get; set; }
 }
+
+public class OPCSubscription : Subscription
+{
+    public int TimeoutMs { get; set; } = 60000;
+}

@@ -25,6 +25,12 @@ public class OpcuaSubscribe
         TagName = "myPV_online"
     };
 
+    private class OpcClientSubscribeConfig
+    {
+        public required int TimeoutMs { get; set; }
+        public required List<OPCMonitoredItem> points { get; set; }
+    }
+
     private static T DeserializeJson<T>(string filePath, int iteration = 1)
     {
         if (iteration > 5) throw new Exception("Deserialize Error!");
@@ -260,7 +266,7 @@ public class OpcuaSubscribe
 
     private static async Task OpcuaSubscribeStart()
     {
-        Dictionary<string, List<OPCMonitoredItem>> connectionPoints = new();
+        Dictionary<string, OpcClientSubscribeConfig> connectionInfo = new();
 
         // Get contents of the following: sos_templates_opcua, site_devices, plant_config (for db connection string), opcua_client_config.json
         try
@@ -324,7 +330,12 @@ public class OpcuaSubscribe
             Dictionary<string, string> connectionUrls = new();
             foreach (OpcClientConnection opcClientConnection in OpcClientConfig.Connections)
             {
-                connectionPoints.Add(opcClientConnection.Url, []);
+                connectionInfo.Add(opcClientConnection.Url, new OpcClientSubscribeConfig()
+                {
+                    TimeoutMs = opcClientConnection.TimeoutMs,
+                    points = []
+                });
+                
                 connectionUrls.Add(opcClientConnection.ConnectionName, opcClientConnection.Url);
             }
 
@@ -374,7 +385,7 @@ public class OpcuaSubscribe
                                     oPCMonitoredItem.Notification += SubscribedItemChange;
 
                                     string url = connectionUrls[device.Network.Params.Server];
-                                    connectionPoints[url].Add(oPCMonitoredItem);
+                                    connectionInfo[url].points.Add(oPCMonitoredItem);
                                 }
 
                                 string timestamp = DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ss.ffffff");
@@ -399,21 +410,23 @@ public class OpcuaSubscribe
 
 
         List<Session> opcClients = new();
-        foreach ((string serverUrl, List<OPCMonitoredItem> points) in connectionPoints)
+        foreach ((string serverUrl, OpcClientSubscribeConfig info) in connectionInfo)
         {
             try
             {
+                var points = info.points;
                 Session session = await OpcuaHelperFunctions.GetSessionByUrl(serverUrl);
 
                 opcClients.Add(session);
 
-                var subscription = new Subscription()
+                var subscription = new OPCSubscription()
                 {
                     DisplayName = $"Subscription to {serverUrl}",
                     PublishingEnabled = true,
                     PublishingInterval = 1000,
                     LifetimeCount = 0,
                     MinLifetimeInterval = 120_000,
+                    TimeoutMs = info.TimeoutMs
                 };
 
                 session.AddSubscription(subscription);

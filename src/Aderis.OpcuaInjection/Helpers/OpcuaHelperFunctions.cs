@@ -106,8 +106,10 @@ public class OpcuaHelperFunctions
                 new UserIdentity(new AnonymousIdentityToken()),
                 null);
         }
-        catch (Exception)
+        catch (Exception ex)
         {
+            Console.WriteLine($"Exception occurred when attempting to fetch {connectionUrl}: {ex.Message}");
+            Console.WriteLine(ex.StackTrace);
             // Wait, Try again
             Thread.Sleep(1500);
             return await GetSessionByUrl(connectionUrl, iteration+1);
