@@ -117,40 +117,41 @@ public class OpcuaSubscribe
 
                 string timestamp = value.SourceTimestamp.ToString("yyyy-MM-ddTHH:mm:ss.ffffff");
                 OpcTemplatePointConfiguration config = opcItem.Config;
-                if (StatusCode.IsGood(value.StatusCode) && Math.Abs((DateTime.UtcNow - value.SourceTimestamp).TotalSeconds) <= 60)
+                if (Math.Abs((DateTime.UtcNow - value.SourceTimestamp).TotalSeconds) <= 60)
                 {
                     try
                     {
-                        double scaledValue = Convert.ToDouble(value.Value);
-                        OpcTemplatePointConfigurationSlope AutoScaling = config.AutoScaling;
-
-                        switch (AutoScaling.ScaleMode)
+                        if (StatusCode.IsGood(value.StatusCode))
                         {
-                            case "slope_intercept":
-                                scaledValue = Math.Round((scaledValue * AutoScaling.Slope) + AutoScaling.Offset, 3);
-                                break;
-                            case "point_slope":
-                                scaledValue = Math.Round((AutoScaling.TargetMax - AutoScaling.TargetMin) / (AutoScaling.ValueMax - AutoScaling.ValueMin) * (scaledValue - AutoScaling.ValueMin) + AutoScaling.TargetMin, 3);
-                                break;
+                            double scaledValue = Convert.ToDouble(value.Value);
+                            OpcTemplatePointConfigurationSlope AutoScaling = config.AutoScaling;
+
+                            switch (AutoScaling.ScaleMode)
+                            {
+                                case "slope_intercept":
+                                    scaledValue = Math.Round((scaledValue * AutoScaling.Slope) + AutoScaling.Offset, 3);
+                                    break;
+                                case "point_slope":
+                                    scaledValue = Math.Round((AutoScaling.TargetMax - AutoScaling.TargetMin) / (AutoScaling.ValueMax - AutoScaling.ValueMin) * (scaledValue - AutoScaling.ValueMin) + AutoScaling.TargetMin, 3);
+                                    break;
+                            }
+
+                            ModifyMeasure(connection, config.MeasureName, opcItem.DaqName, scaledValue, timestamp);
+
+                            // Got a new Measure, need to set myPV_online
+                            ModifyMeasure(connection, myPVOnlineTag.MeasureName, opcItem.DaqName, 1.0, timestamp);
+                        } else {
+                            // Set myPV_online to false now
+                            ModifyMeasure(connection, myPVOnlineTag.MeasureName, opcItem.DaqName, 0.0, DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ss.ffffff"));
+
+                            // Re-evaluate: Should we write "null" to this point? Or just leave as-is?
+                            // ModifyMeasure(connection, config.MeasureName, opcItem.DaqName, null, DateTime.UtcNow);
                         }
-
-                        ModifyMeasure(connection, config.MeasureName, opcItem.DaqName, scaledValue, timestamp);
-
-                        // Got a new Measure, need to set myPV_online
-                        ModifyMeasure(connection, myPVOnlineTag.MeasureName, opcItem.DaqName, 1.0, timestamp);
                     }
                     catch (Exception ex)
                     {
                         Console.WriteLine($"An Error occurred when saving device {opcItem.DaqName}, {opcItem.Config.MeasureName}: {ex}");
                     }
-                }
-                else
-                {
-                    // Set online to false until we get another good update
-                    ModifyMeasure(connection, myPVOnlineTag.MeasureName, opcItem.DaqName, 0.0, timestamp);
-
-                    // value is null
-                    ModifyMeasure(connection, config.MeasureName, opcItem.DaqName, null, timestamp);
                 }
 
             }
@@ -335,7 +336,7 @@ public class OpcuaSubscribe
                     TimeoutMs = opcClientConnection.TimeoutMs,
                     points = []
                 });
-                
+
                 connectionUrls.Add(opcClientConnection.ConnectionName, opcClientConnection.Url);
             }
 
