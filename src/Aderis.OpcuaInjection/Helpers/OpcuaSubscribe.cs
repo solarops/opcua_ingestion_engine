@@ -448,7 +448,7 @@ public class OpcuaSubscribe
 
         try
         {
-            int i = 1;
+            int i = 0;
             while (true)
             {
                 // Every 12th iteration of 5s (60s)
@@ -521,7 +521,7 @@ public class OpcuaSubscribe
                         }
                     }
                     // reset
-                    i = 1;
+                    i = 0;
                 }
 
                 // Evaluate If has ben cancelled.
