@@ -140,7 +140,9 @@ public class OpcuaSubscribe
 
                             // Got a new Measure, need to set myPV_online
                             ModifyMeasure(connection, myPVOnlineTag.MeasureName, opcItem.DaqName, 1.0, timestamp);
-                        } else {
+                        }
+                        else
+                        {
                             // Set myPV_online to false now
                             ModifyMeasure(connection, myPVOnlineTag.MeasureName, opcItem.DaqName, 0.0, DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ss.ffffff"));
 
@@ -446,7 +448,7 @@ public class OpcuaSubscribe
 
         try
         {
-            int i = 1;
+            int i = 0;
             while (true)
             {
                 // Every 12th iteration of 5s (60s)
@@ -460,19 +462,53 @@ public class OpcuaSubscribe
                         {
                             try
                             {
-                                string lockQuery = "SELECT * FROM modvalues FOR UPDATE";
-                                using (var lockCommand = new NpgsqlCommand(lockQuery, connection, transaction))
+                                // Query the rows with measure_name == "myPV_online" and measure_value == 1
+                                // DISTINCT: removes multiple duplicate rows from a result set
+                                string selectDevicesQuery = @"
+                                    SELECT DISTINCT device 
+                                    FROM modvalues 
+                                    WHERE measure_name = 'myPV_online' AND measure_value = 1";
+
+                                var devicesToLock = new List<string>();
+
+                                using (var selectCommand = new NpgsqlCommand(selectDevicesQuery, connection, transaction))
+                                using (var reader = selectCommand.ExecuteReader())
                                 {
-                                    lockCommand.ExecuteNonQuery();
+                                    while (reader.Read())
+                                    {
+                                        devicesToLock.Add(reader.GetString(0));
+                                    }
                                 }
 
-                                string updateQuery = "UPDATE modvalues SET last_updated = @currentTime";
-                                using (var updateCommand = new NpgsqlCommand(updateQuery, connection, transaction))
+                                if (devicesToLock.Count > 0)
                                 {
-                                    // Use parameterized query to prevent SQL injection
-                                    updateCommand.Parameters.AddWithValue("currentTime", DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ss.ffffff"));
+                                    // Lock rows with the devices found
+                                    string lockQuery = @"
+                                        SELECT * 
+                                        FROM modvalues 
+                                        WHERE device = ANY(@devices) 
+                                        FOR UPDATE";
 
-                                    int rowsAffected = updateCommand.ExecuteNonQuery();
+                                    using (var lockCommand = new NpgsqlCommand(lockQuery, connection, transaction))
+                                    {
+                                        lockCommand.Parameters.AddWithValue("devices", devicesToLock.ToArray());
+                                        lockCommand.ExecuteNonQuery();
+                                    }
+
+                                    // Update the last_updated value for the locked rows
+                                    string updateQuery = @"
+                                        UPDATE modvalues 
+                                        SET last_updated = @currentTime 
+                                        WHERE device = ANY(@devices)";
+
+                                    using (var updateCommand = new NpgsqlCommand(updateQuery, connection, transaction))
+                                    {
+                                        // Use parameterized query to prevent SQL injection
+                                        updateCommand.Parameters.AddWithValue("currentTime", DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ss.ffffff"));
+                                        updateCommand.Parameters.AddWithValue("devices", devicesToLock.ToArray());
+
+                                        int rowsAffected = updateCommand.ExecuteNonQuery();
+                                    }
                                 }
 
                                 transaction.Commit();
@@ -485,7 +521,7 @@ public class OpcuaSubscribe
                         }
                     }
                     // reset
-                    i = 1;
+                    i = 0;
                 }
 
                 // Evaluate If has ben cancelled.
