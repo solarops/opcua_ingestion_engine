@@ -1,4 +1,5 @@
 using Aderis.OpcuaInjection.Models;
+using Opc.Ua.Configuration;
 using Opc.Ua.Client;
 using Opc.Ua;
 using System.Text.Json;
@@ -91,7 +92,23 @@ public class OpcuaHelperFunctions
             // // Validate the application certificate
             await config.Validate(ApplicationType.Client);
 
-            var selectedEndpoint = CoreClientUtils.SelectEndpoint(connectionUrl, useSecurity: false, discoverTimeout: 5000);
+            var uri = new Uri(connectionUrl);
+
+            DiscoveryClient client = DiscoveryClient.Create(uri);
+
+            var endpoints = await client.GetEndpointsAsync(null);
+
+            Console.WriteLine($"Discovered {endpoints.Count()} endpoints at {connectionUrl}");
+            
+            int num = 1;
+            foreach (var endpoint in endpoints)
+            {
+                Console.WriteLine($"Endpoint {num}: {endpoint.EndpointUrl} has security mode: {endpoint.SecurityMode}");
+                num += 1;
+            }
+
+            var selectedEndpoint = endpoints.FirstOrDefault(x => x.SecurityMode == MessageSecurityMode.None);
+            if (selectedEndpoint == null) throw new Exception($"URI with NoSecurity not found for {connectionUrl}");
 
             // Output the selected endpoint details
             Console.WriteLine($"Selected Endpoint: {selectedEndpoint.EndpointUrl}");
