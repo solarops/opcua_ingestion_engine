@@ -117,11 +117,16 @@ public class OpcuaBrowse
         catch (Exception ex)
         {
             Console.WriteLine("!!!!!!!!!!!!!!!!!!!!!!");
+            Console.Error.WriteLine("!!!!!!!!!!!!!!!!!!!!!!");
             // Handle exceptions and print the error
 
             Console.WriteLine($"Error: {ex.Message}");
+            Console.Error.WriteLine($"Error: {ex.Message}");
             Console.WriteLine(ex.StackTrace);
+            Console.Error.WriteLine(ex.StackTrace);
             Console.WriteLine(rd.ToString());
+            Console.Error.WriteLine(rd.ToString());
+
 
             if (ex is ServiceResultException sre)
             {
@@ -130,6 +135,7 @@ public class OpcuaBrowse
             }
 
             Console.WriteLine("#########################");
+            Console.Error.WriteLine("#########################");
 
             return;
         }
@@ -150,7 +156,17 @@ public class OpcuaBrowse
     }
     public async Task<bool> StartBrowse()
     {
+        string filePath = $"{SosNodesPrefix}/{_connectionId}.json";
+        if (File.Exists(filePath))
+        {
+            File.Delete(filePath);
+        }
+
         string tempFilePath = $"{SosNodesPrefix}/temp_{_connectionId}.json";
+        string errorFilePath = $"{SosNodesPrefix}/errors_{_connectionId}.json";
+        if (File.Exists(errorFilePath)) {
+            File.Delete(errorFilePath);
+        }
         
         // consider instead exceptions here..
         if (File.Exists(tempFilePath))
@@ -247,8 +263,6 @@ public class OpcuaBrowse
         });
 
         File.Delete(tempFilePath);
-
-        string filePath = $"{SosNodesPrefix}/{_connectionId}.json";
 
         File.WriteAllText(filePath, json);
         stopwatch.Stop();
