@@ -19,11 +19,26 @@ public class ClientController : BaseApiController
         _mapper = mapper;
     }
 
+    [HttpDelete("config/delete/{connectionName}")]
+    public async Task<IActionResult> DeleteConnection(string connectionName)
+    {
+        var saved = await _opcHelperService.RemoveClientConfigByName(connectionName);
+
+        if (saved) {
+            _opcSubscribeService.ReloadPolling();
+            return Ok();
+        }
+
+        return BadRequest();
+    }
+
     [HttpPatch("config/update")]
     // Notify process after changing opcua client config.
     public async Task<IActionResult> UpdateConfig(OpcClientConnectionDto opcClientConnectionDto)
     {
         var opcClientConnection = _mapper.Map<OpcClientConnection>(opcClientConnectionDto);
+
+        opcClientConnection.BrowseExclusionFolders = _mapper.Map<List<BrowseExclusionFolder>>(opcClientConnectionDto.BrowseExclusionFolders);
         
         var saved = await _opcHelperService.UpdateClientConfig(opcClientConnection);
         
@@ -39,6 +54,8 @@ public class ClientController : BaseApiController
     public async Task<IActionResult> AddConfig(OpcClientConnectionDto opcClientConnectionDto)
     {
         var opcClientConnection = _mapper.Map<OpcClientConnection>(opcClientConnectionDto);
+
+        opcClientConnection.BrowseExclusionFolders = _mapper.Map<List<BrowseExclusionFolder>>(opcClientConnectionDto.BrowseExclusionFolders);
         
         var saved = await _opcHelperService.AddClientConfig(opcClientConnection);
 
@@ -48,5 +65,24 @@ public class ClientController : BaseApiController
         }
 
         return BadRequest();
+    }
+
+    [HttpGet("config/get")]
+    public async Task<ActionResult<List<OpcClientConnectionDto>>> GetConnectionsAsync()
+    {
+        var opcClientConnections = await _opcHelperService.LoadClientConfig();
+        var ret = new List<OpcClientConnectionDto>();
+
+        foreach ( var connection in opcClientConnections )
+        {
+            var dto = _mapper.Map<OpcClientConnectionDto>(connection);
+            dto.BrowseExclusionFolders = _mapper.Map<List<string>>(connection.BrowseExclusionFolders);
+            
+            if (connection.EncryptedPassword != null) dto.Password = _opcHelperService.DecryptPassword(connection.EncryptedPassword);
+            
+            ret.Add(dto);
+        }
+        
+        return Ok(ret);
     }
 }

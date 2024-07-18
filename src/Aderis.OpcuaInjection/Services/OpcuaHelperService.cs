@@ -40,7 +40,9 @@ public class OpcuaHelperService : IOpcHelperService
     {
         var scope = _provider.CreateScope();
         var _context = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
-        var config = await _context.OpcClientConnections.ToListAsync();
+        var config = await _context.OpcClientConnections
+            .Include(x => x.BrowseExclusionFolders)
+            .ToListAsync();
         scope.Dispose();
 
         return config;
@@ -67,9 +69,16 @@ public class OpcuaHelperService : IOpcHelperService
 
     public async Task<bool> UpdateClientConfig(OpcClientConnection connection)
     {
+        var scope = _provider.CreateScope();
+        var _context = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
         try
         {
-            var existingEntry = await LoadClientConfigByName(connection.ConnectionName);
+            var existingEntry = await _context.OpcClientConnections
+            .Include(x => x.BrowseExclusionFolders)
+            .FirstOrDefaultAsync(x => x.ConnectionName == connection.ConnectionName);
+
+            if (existingEntry == null) return false;
+
             _mapper.Map(connection, existingEntry);
 
             if (connection.EncryptedPassword != null)
@@ -99,6 +108,8 @@ public class OpcuaHelperService : IOpcHelperService
                 };
                existingEntry.BrowseExclusionFolders.Add(newItem);
             }
+
+            return await _context.SaveChangesAsync() > 0;
         }
         catch (Exception ex)
         {
@@ -106,14 +117,11 @@ public class OpcuaHelperService : IOpcHelperService
             Console.Error.WriteLine(ex.Message);
             Console.Error.WriteLine(ex.StackTrace);
             return false;
+        } 
+        finally
+        {
+            scope.Dispose();
         }
-
-        var scope = _provider.CreateScope();
-        var _context = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
-        var result = await _context.SaveChangesAsync() > 0;
-        scope.Dispose();
-
-        return result;
     }
 
     public async Task<OpcClientConnection> LoadClientConfigByName(string connectionName)
@@ -177,5 +185,35 @@ public class OpcuaHelperService : IOpcHelperService
                 }
             }
         }
+    }
+
+    public async Task<bool> RemoveClientConfigByName(string connectionName)
+    {
+        var scope = _provider.CreateScope();
+        try
+        {
+            var _context = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+            var config = await _context.OpcClientConnections
+            .Include(x => x.BrowseExclusionFolders)
+            .FirstOrDefaultAsync(x => x.ConnectionName == connectionName);
+            
+            if (config == null) return false;
+
+            _context.OpcClientConnections.Remove(config);
+
+            return await _context.SaveChangesAsync() > 0;
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"Requested delete {connectionName} that does not exist.");
+            Console.Error.WriteLine(ex.Message);
+            Console.Error.WriteLine(ex.StackTrace);
+            
+            return false;
+        }
+        finally
+        {
+            scope.Dispose();
+        };        
     }
 }

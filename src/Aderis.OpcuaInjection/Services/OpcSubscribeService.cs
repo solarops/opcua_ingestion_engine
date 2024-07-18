@@ -149,7 +149,7 @@ public class OpcSubscribeService : BackgroundService, IOpcSubscribeService
             {
                 if (!string.IsNullOrEmpty(opcClientConnection.UserName)) {
                     var pw = _opcHelperService.DecryptPassword(opcClientConnection.EncryptedPassword);
-                    Console.WriteLine($"Password: {pw}");
+                    // Console.WriteLine($"Password: {pw}");
                 }
 
                 connectionInfo.Add(opcClientConnection.Url, new OpcClientSubscribeConfig()

@@ -9,5 +9,7 @@ public interface IOpcHelperService
     Task<OpcClientConnection> LoadClientConfigByName(string connectionName);
     Task<bool> AddClientConfig(OpcClientConnection connection);
     Task<bool> UpdateClientConfig(OpcClientConnection connection);
+    Task<bool> RemoveClientConfigByName(string connectionName);
     string DecryptPassword(byte[]? encryptedPassword);
+    
 }
