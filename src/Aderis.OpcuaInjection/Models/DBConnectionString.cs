@@ -2,10 +2,12 @@ using System.Text.Json.Serialization;
 
 namespace Aderis.OpcuaInjection.Models;
 
-public class MODBUSDBConfig
+public class DbConfig
 {
     [JsonPropertyName("modvalues_db_config")]
     public required DBConnection Connection { get; set; }
+    [JsonPropertyName("opcua_client_config")]
+    public required DBConnection ClientConfigConnection { get; set; }
 }
 
 public class DBConnection
@@ -22,7 +24,7 @@ public class DBConnection
     public required string Password { get; set; }
 
     // Host=localhost;Username=myuser;Password=mypassword;Database=mydatabase
-    public string ToConnectionString()
+    public override string ToString()
     {
         return $"Host={Server};Port={Port};Username={Username};Password={Password};Database={Database}";
     }

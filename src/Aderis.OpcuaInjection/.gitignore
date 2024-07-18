@@ -3,6 +3,10 @@
 ##
 ## Get latest from `dotnet new gitignore`
 
+# key, iv files for testing
+keyfile.bin
+ivfile.bin
+
 # dotenv files
 .env
 
