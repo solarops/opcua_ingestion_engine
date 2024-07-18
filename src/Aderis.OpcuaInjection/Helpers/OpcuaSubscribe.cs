@@ -18,6 +18,15 @@ public class OpcuaSubscribe
     private static Dictionary<string, Dictionary<string, List<OpcTemplatePointConfiguration>>> OpcTemplates = LoadOpcTemplates();
     private static OpcClientConfig OpcClientConfig = OpcuaHelperFunctions.LoadClientConfig();
     private static Dictionary<string, List<JSONGenericDevice>> SiteDevices = LoadSiteDevices();
+
+    /// <summary>
+    /// Represents the online/offline status tag for device
+    /// </summary>
+    /// <remarks>
+    /// Each device has one row with the myPV_online tag.
+    /// Each device can have 2 or more rows depending on the number of data streams it provides.
+    /// The value of myPV_online is 1 if the device has been updated in the last 60 seconds, otherwise 0.
+    /// </remarks>
     private static OpcTemplatePointConfigurationBase myPVOnlineTag = new OpcTemplatePointConfigurationBase()
     {
         Unit = "bool",
@@ -25,10 +34,29 @@ public class OpcuaSubscribe
         TagName = "myPV_online"
     };
 
+    private static System.Timers.Timer opcTimeoutTimer;
+    //time period allowed of 0 SubscribedItemChange events before assuming server connection down
+    private static readonly TimeSpan OpcTimeoutPeriod = TimeSpan.FromMinutes(3);  //1 minute seems to work fine but will make more conservative 3 mins until improve retrying mechanism
+
     private class OpcClientSubscribeConfig
     {
         public required int TimeoutMs { get; set; }
         public required List<OPCMonitoredItem> points { get; set; }
+    }
+
+    public static void InitializeOpcTimeoutTimer()
+    {
+        Console.WriteLine("Initializing OPC UA server timeout timer...");
+        opcTimeoutTimer = new System.Timers.Timer(OpcTimeoutPeriod.TotalMilliseconds);
+        opcTimeoutTimer.Elapsed += OnOpcTimeout;
+        opcTimeoutTimer.AutoReset = false; //once elapsed, do not restart
+        opcTimeoutTimer.Start();
+    }
+
+    private static void OnOpcTimeout(object sender, System.Timers.ElapsedEventArgs e)
+    {
+        Console.WriteLine("OPC UA server timeout reached. Cancelling operations.");
+        FileSystemReloadCancel.Cancel();
     }
 
     private static T DeserializeJson<T>(string filePath, int iteration = 1)
@@ -104,8 +132,19 @@ public class OpcuaSubscribe
                 break;
         }
     }
+
+    /// <summary>
+    /// Handles changes in subscribed OPC items by processing the new values and updating the corresponding entries in the modvalues db table.
+    /// </summary>
+    /// <param name="item">The OPC monitored item that has changed.</param>
+    /// <param name="e">Event arguments containing the notification details.</param>
     static void SubscribedItemChange(MonitoredItem item, MonitoredItemNotificationEventArgs e)
     {
+        // Reset the OPC timeout timer each time new data is received
+        opcTimeoutTimer.Stop();
+        //Console.Write("Resetting OPC UA server timeout timer...");
+        opcTimeoutTimer.Start();
+
         // This will be an OPCMonitoredItem
         OPCMonitoredItem opcItem = (OPCMonitoredItem)item;
 
@@ -346,7 +385,7 @@ public class OpcuaSubscribe
             {
                 // Open the connection
                 connection.Open();
-                foreach ((string deviceType, List<JSONGenericDevice> deviceList) in SiteDevices)
+                foreach ((string deviceType, List<JSONGenericDevice> deviceList) in SiteDevices) //ABQ they come in as lists? what is the higher order grouping? anyway of knowing if a list will def not have opcua devices?
                 {
                     foreach (JSONGenericDevice device in deviceList)
                     {
@@ -358,8 +397,11 @@ public class OpcuaSubscribe
 
                                 // This tag includes add'l AutoScaling that is not require'd. Consider a different structure
 
+                                //add the online/offline status row for the current device
                                 CheckAndAddMeasure(connection, deviceType, device, myPVOnlineTag);
 
+                                //add a row in modvalues for each datapoint the current device provides
+                                //EX adds two rows for weather_station, one for irradiance and one for tilt-angle
                                 foreach (OpcTemplatePointConfiguration point in points)
                                 {
                                     CheckAndAddMeasure(connection, deviceType, device, point);
@@ -371,6 +413,7 @@ public class OpcuaSubscribe
                                         DeadbandType = (uint)DeadbandType.None
                                     };
 
+                                    //construct monitored OPC item based on template in site devices
                                     OPCMonitoredItem oPCMonitoredItem = new()
                                     {
                                         DaqName = device.DaqName,
@@ -432,11 +475,12 @@ public class OpcuaSubscribe
                     TimeoutMs = info.TimeoutMs
                 };
 
+                InitializeOpcTimeoutTimer(); //initialize/start opc timer right before subscriptions start
+
                 session.AddSubscription(subscription);
                 subscription.Create();
-                subscription.AddItems(points);
+                subscription.AddItems(points); //subscribe to each data stream of each device obtained from site_devices.json
                 subscription.ApplyChanges();
-
             }
             catch (Exception ex)
             {
@@ -448,6 +492,16 @@ public class OpcuaSubscribe
 
         try
         {
+            /* --- Main Loop ----
+            * Every 60s updates timestamp to current time for each device marked online
+            * (updates the timestamp for each of the devices data points/rows)
+            * 
+            * also checks if global cancellation or file system reload cancellation has been requested and exits/begins those processes
+            *
+            * Mainly necessary due to fact that OPC UA is designed to not update points that have not changed
+            * otherwise SubscribedItemChange method called on monitored opcua items would do all the work
+            */
+
             int i = 0;
             while (true)
             {
@@ -482,7 +536,8 @@ public class OpcuaSubscribe
 
                                 if (devicesToLock.Count > 0)
                                 {
-                                    // Lock rows with the devices found
+                                    // Lock rows with the devices found 
+                                    //(FOR UPDATE is the locking clause, it blocks potential conflicting concurrent transactions)
                                     string lockQuery = @"
                                         SELECT * 
                                         FROM modvalues 
