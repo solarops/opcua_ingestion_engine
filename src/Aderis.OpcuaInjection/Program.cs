@@ -29,6 +29,11 @@ builder.Services.AddDbContext<ApplicationDbContext>(opt => {
 
 var app = builder.Build();
 
+// Apply migrations
+await using var scope = app.Services.CreateAsyncScope();
+await using var _context = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+await _context.Database.MigrateAsync();
+
 // Configure the HTTP request pipeline.
 
 app.UseHttpsRedirection();
