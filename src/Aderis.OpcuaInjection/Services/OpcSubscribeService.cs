@@ -147,16 +147,15 @@ public class OpcSubscribeService : BackgroundService, IOpcSubscribeService
 
             foreach (var opcClientConnection in opcClientConnections)
             {
+                var userIdentity = new UserIdentity(new AnonymousIdentityToken());
+
                 if (!string.IsNullOrEmpty(opcClientConnection.UserName)) {
-                    var pw = _opcHelperService.DecryptPassword(opcClientConnection.EncryptedPassword);
-                    // Console.WriteLine($"Password: {pw}");
+                    userIdentity = new UserIdentity(opcClientConnection.UserName.Trim(), _opcHelperService.DecryptPassword(opcClientConnection.EncryptedPassword).Trim());
                 }
 
                 connectionInfo.Add(opcClientConnection.Url, new OpcClientSubscribeConfig()
                 {
-                    UserIdentity = string.IsNullOrEmpty(opcClientConnection.UserName)
-                        ? new UserIdentity(new AnonymousIdentityToken())
-                        : new UserIdentity(opcClientConnection.UserName, _opcHelperService.DecryptPassword(opcClientConnection.EncryptedPassword)),
+                    UserIdentity = userIdentity,
                     TimeoutMs = opcClientConnection.TimeoutMs,
                     points = []
                 });
@@ -467,6 +466,8 @@ public class OpcSubscribeService : BackgroundService, IOpcSubscribeService
         // This will be an OPCMonitoredItem
         OPCMonitoredItem opcItem = (OPCMonitoredItem)item;
 
+        var subscription = (OPCSubscription)item.Subscription;
+
         using (var connection = new NpgsqlConnection(_dbConnectionString))
         {
             connection.Open();
@@ -475,7 +476,7 @@ public class OpcSubscribeService : BackgroundService, IOpcSubscribeService
 
                 string timestamp = value.SourceTimestamp.ToString("yyyy-MM-ddTHH:mm:ss.ffffff");
                 OpcTemplatePointConfiguration config = opcItem.Config;
-                if (Math.Abs((DateTime.UtcNow - value.SourceTimestamp).TotalSeconds) <= 60)
+                if (Math.Abs((DateTime.UtcNow - value.SourceTimestamp).TotalMilliseconds) <= subscription.TimeoutMs)
                 {
                     try
                     {
