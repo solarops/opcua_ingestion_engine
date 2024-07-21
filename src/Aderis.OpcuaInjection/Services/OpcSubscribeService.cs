@@ -149,7 +149,8 @@ public class OpcSubscribeService : BackgroundService, IOpcSubscribeService
             {
                 var userIdentity = new UserIdentity(new AnonymousIdentityToken());
 
-                if (!string.IsNullOrEmpty(opcClientConnection.UserName)) {
+                if (!string.IsNullOrEmpty(opcClientConnection.UserName))
+                {
                     userIdentity = new UserIdentity(opcClientConnection.UserName.Trim(), _opcHelperService.DecryptPassword(opcClientConnection.EncryptedPassword).Trim());
                 }
 
@@ -281,65 +282,62 @@ public class OpcSubscribeService : BackgroundService, IOpcSubscribeService
                     {
                         connection.Open();
 
-                        using (var transaction = connection.BeginTransaction(IsolationLevel.ReadCommitted))
+
+                        // Query the rows with measure_name == "myPV_online" and measure_value == 1
+                        // DISTINCT: removes multiple duplicate rows from a result set
+                        string selectDevicesQuery = @"
+                            SELECT DISTINCT device 
+                            FROM modvalues 
+                            WHERE measure_name = 'myPV_online' AND measure_value = 1";
+
+                        var devicesToLock = new List<string>();
+
+                        using (var selectCommand = new NpgsqlCommand(selectDevicesQuery, connection))
+                        using (var reader = selectCommand.ExecuteReader())
                         {
-                            try
+                            while (reader.Read())
                             {
-                                // Query the rows with measure_name == "myPV_online" and measure_value == 1
-                                // DISTINCT: removes multiple duplicate rows from a result set
-                                string selectDevicesQuery = @"
-                                    SELECT DISTINCT device 
-                                    FROM modvalues 
-                                    WHERE measure_name = 'myPV_online' AND measure_value = 1";
-
-                                var devicesToLock = new List<string>();
-
-                                using (var selectCommand = new NpgsqlCommand(selectDevicesQuery, connection, transaction))
-                                using (var reader = selectCommand.ExecuteReader())
-                                {
-                                    while (reader.Read())
-                                    {
-                                        devicesToLock.Add(reader.GetString(0));
-                                    }
-                                }
-
-                                if (devicesToLock.Count > 0)
-                                {
-                                    // Lock rows with the devices found
-                                    string lockQuery = @"
-                                        SELECT * 
-                                        FROM modvalues 
-                                        WHERE device = ANY(@devices) 
-                                        FOR UPDATE";
-
-                                    using (var lockCommand = new NpgsqlCommand(lockQuery, connection, transaction))
-                                    {
-                                        lockCommand.Parameters.AddWithValue("devices", devicesToLock.ToArray());
-                                        lockCommand.ExecuteNonQuery();
-                                    }
-
-                                    // Update the last_updated value for the locked rows
-                                    string updateQuery = @"
-                                        UPDATE modvalues 
-                                        SET last_updated = @currentTime 
-                                        WHERE device = ANY(@devices)";
-
-                                    using (var updateCommand = new NpgsqlCommand(updateQuery, connection, transaction))
-                                    {
-                                        // Use parameterized query to prevent SQL injection
-                                        updateCommand.Parameters.AddWithValue("currentTime", DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ss.ffffff"));
-                                        updateCommand.Parameters.AddWithValue("devices", devicesToLock.ToArray());
-
-                                        int rowsAffected = updateCommand.ExecuteNonQuery();
-                                    }
-                                }
-
-                                transaction.Commit();
+                                devicesToLock.Add(reader.GetString(0));
                             }
-                            catch (Exception ex)
+                        }
+
+                        if (devicesToLock.Count > 0)
+                        {
+                            // Lock rows with the devices found
+                            // ctid = physical location of the row version within its table. Modified by VACUUM FULL.                            
+                            string updateTimestampQuery = @"
+                                UPDATE modvalues
+                                SET last_updated = @lastUpdated
+                                WHERE device = ANY(@devices)
+                                AND ctid NOT IN (
+                                    SELECT ctid
+                                    FROM modvalues
+                                    WHERE device = ANY(@devices)
+                                    FOR UPDATE
+                                )";
+
+                            string currentUtcTime = DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ss.ffffff");
+
+
+                            using (var transaction = connection.BeginTransaction())
                             {
-                                Console.WriteLine($"An Error occurred when attempting to migrate datetimes: {ex.Message}");
-                                transaction.Rollback();
+                                try
+                                {
+                                    using (var updateCommand = new NpgsqlCommand(updateTimestampQuery, connection, transaction))
+                                    {
+                                        updateCommand.Parameters.AddWithValue("devices", devicesToLock.ToArray());
+                                        updateCommand.Parameters.AddWithValue("lastUpdated", currentUtcTime);
+
+                                        int affectedRows = updateCommand.ExecuteNonQuery();
+                                        transaction.Commit();
+                                    }
+                                }
+                                catch (Exception ex)
+                                {
+                                    Console.WriteLine($"An Error occurred when attempting to migrate datetimes: {ex.Message}");
+                                    Console.Error.WriteLine($"An Error occurred when attempting to migrate datetimes: {ex.Message}");
+                                    transaction.Rollback();
+                                }
                             }
                         }
                     }
@@ -519,11 +517,32 @@ public class OpcSubscribeService : BackgroundService, IOpcSubscribeService
         }
     }
 
-    private void ModifyMeasure(NpgsqlConnection connection, string measureName, string daqName, object scaledValue, string timestamp)
+    private void ModifyMeasure(NpgsqlConnection connection, string measureName, string daqName, object scaledValue, string timestamp, int iteration = 0)
     {
+        // 0, 1, 2 = Three tries
+        if (iteration > 2) return;
+
         if (scaledValue == null) scaledValue = DBNull.Value;
 
-        string updateRowQuery = @"
+        // For Acquiring Locks
+        string selectForUpdateQuery = @"
+            SELECT ctid
+            FROM modvalues
+            WHERE device = @device AND measure_name = @measure
+            FOR UPDATE";
+
+        using (var selectCommand = new NpgsqlCommand(selectForUpdateQuery, connection))
+        {
+            selectCommand.Parameters.AddWithValue("device", daqName);
+            selectCommand.Parameters.AddWithValue("measure", measureName);
+
+            using (var transaction = connection.BeginTransaction())
+            {
+                try
+                {
+                    selectCommand.ExecuteNonQuery();
+
+                    string updateRowQuery = @"
                         UPDATE modvalues
                         SET 
                             tag_value=@tagValue, 
@@ -531,15 +550,28 @@ public class OpcSubscribeService : BackgroundService, IOpcSubscribeService
                             last_updated=@lastUpdated
                         WHERE device = @device AND measure_name = @measure";
 
-        using (var updateCommand = new NpgsqlCommand(updateRowQuery, connection))
-        {
-            updateCommand.Parameters.AddWithValue("device", daqName);
-            updateCommand.Parameters.AddWithValue("measure", measureName);
-            updateCommand.Parameters.AddWithValue("tagValue", scaledValue);
-            updateCommand.Parameters.AddWithValue("measureValue", scaledValue);
-            updateCommand.Parameters.AddWithValue("lastUpdated", timestamp);
+                    using (var updateCommand = new NpgsqlCommand(updateRowQuery, connection))
+                    {
+                        updateCommand.Parameters.AddWithValue("device", daqName);
+                        updateCommand.Parameters.AddWithValue("measure", measureName);
+                        updateCommand.Parameters.AddWithValue("tagValue", scaledValue);
+                        updateCommand.Parameters.AddWithValue("measureValue", scaledValue);
+                        updateCommand.Parameters.AddWithValue("lastUpdated", timestamp);
 
-            int affectedRows = updateCommand.ExecuteNonQuery();
+                        int affectedRows = updateCommand.ExecuteNonQuery();
+                        // Console.WriteLine(affectedRows);
+                    }
+
+                    transaction.Commit();
+                }
+                catch (Exception ex)
+                {
+                    transaction.Rollback();
+                    Console.WriteLine("Real-time data update failed: " + ex.Message);
+                    Thread.Sleep(100);
+                    ModifyMeasure(connection, measureName, daqName, scaledValue, timestamp, iteration + 1);
+                }
+            }
         }
     }
 
