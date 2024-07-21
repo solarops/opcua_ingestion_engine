@@ -336,7 +336,7 @@ public class OpcSubscribeService : BackgroundService, IOpcSubscribeService
                                 {
                                     Console.WriteLine($"{currentUtcTime}: An Error occurred when attempting to migrate datetimes: {ex.Message}");
                                     Console.Error.WriteLine($"{currentUtcTime}: An Error occurred when attempting to migrate datetimes: {ex.Message}");
-                                    
+
                                     transaction.Rollback();
                                 }
                             }
@@ -473,46 +473,61 @@ public class OpcSubscribeService : BackgroundService, IOpcSubscribeService
             foreach (var value in opcItem.DequeueValues())
             {
 
-                string timestamp = value.SourceTimestamp.ToString("yyyy-MM-ddTHH:mm:ss.ffffff");
+                
                 OpcTemplatePointConfiguration config = opcItem.Config;
-                if (Math.Abs((DateTime.UtcNow - value.SourceTimestamp).TotalMilliseconds) <= subscription.TimeoutMs)
+
+                // ALEX: Commented-out timeout
+                /*
+                Explanation:
+                    - If we have no way of historizing at value.SourceTimestamp, why store it as it?
+                    - If the OPCUA server claims this is "good" data - record it. Store as UTC now.
+                    - Maybe a configuration setting for "historian" mode when we are capable of storing by SourceTimestamp
+                
+                string timestamp = value.SourceTimestamp.ToString("yyyy-MM-ddTHH:mm:ss.ffffff");
+                if (Math.Abs((DateTime.UtcNow - value.SourceTimestamp).TotalMilliseconds) <= subscription.TimeoutMs) {}
+                */
+
+                string timestamp = DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ss.ffffff");
+
+                try
                 {
-                    try
+                    if (StatusCode.IsGood(value.StatusCode))
                     {
-                        if (StatusCode.IsGood(value.StatusCode))
+                        double scaledValue = Convert.ToDouble(value.Value);
+                        OpcTemplatePointConfigurationSlope AutoScaling = config.AutoScaling;
+
+                        switch (AutoScaling.ScaleMode)
                         {
-                            double scaledValue = Convert.ToDouble(value.Value);
-                            OpcTemplatePointConfigurationSlope AutoScaling = config.AutoScaling;
-
-                            switch (AutoScaling.ScaleMode)
-                            {
-                                case "slope_intercept":
-                                    scaledValue = Math.Round((scaledValue * AutoScaling.Slope) + AutoScaling.Offset, 3);
-                                    break;
-                                case "point_slope":
-                                    scaledValue = Math.Round((AutoScaling.TargetMax - AutoScaling.TargetMin) / (AutoScaling.ValueMax - AutoScaling.ValueMin) * (scaledValue - AutoScaling.ValueMin) + AutoScaling.TargetMin, 3);
-                                    break;
-                            }
-
-                            ModifyMeasure(connection, config.MeasureName, opcItem.DaqName, scaledValue, timestamp);
-
-                            // Got a new Measure, need to set myPV_online
-                            ModifyMeasure(connection, myPVOnlineTag.MeasureName, opcItem.DaqName, 1.0, timestamp);
+                            case "slope_intercept":
+                                scaledValue = Math.Round((scaledValue * AutoScaling.Slope) + AutoScaling.Offset, 3);
+                                break;
+                            case "point_slope":
+                                scaledValue = Math.Round((AutoScaling.TargetMax - AutoScaling.TargetMin) / (AutoScaling.ValueMax - AutoScaling.ValueMin) * (scaledValue - AutoScaling.ValueMin) + AutoScaling.TargetMin, 3);
+                                break;
                         }
-                        else
-                        {
-                            // Set myPV_online to false now
-                            ModifyMeasure(connection, myPVOnlineTag.MeasureName, opcItem.DaqName, 0.0, DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ss.ffffff"));
 
-                            // Re-evaluate: Should we write "null" to this point? Or just leave as-is?
-                            // ModifyMeasure(connection, config.MeasureName, opcItem.DaqName, null, DateTime.UtcNow);
-                        }
+                        ModifyMeasure(connection, config.MeasureName, opcItem.DaqName, scaledValue, timestamp);
+
+                        // Got a new Measure, need to set myPV_online
+                        ModifyMeasure(connection, myPVOnlineTag.MeasureName, opcItem.DaqName, 1.0, timestamp);
                     }
-                    catch (Exception ex)
+                    else
                     {
-                        Console.WriteLine($"An Error occurred when saving device {opcItem.DaqName}, {opcItem.Config.MeasureName}: {ex}");
+                        // Set myPV_online to false now
+                        ModifyMeasure(connection, myPVOnlineTag.MeasureName, opcItem.DaqName, 0.0, DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ss.ffffff"));
+
+                        // Re-evaluate: Should we write "null" to this point? Or just leave as-is?
+                        // ModifyMeasure(connection, config.MeasureName, opcItem.DaqName, null, DateTime.UtcNow);
                     }
                 }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"An Error occurred when saving device {opcItem.DaqName}, {opcItem.Config.MeasureName}: {ex}");
+                }
+
+
+
+
 
             }
         }
