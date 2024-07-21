@@ -334,8 +334,8 @@ public class OpcSubscribeService : BackgroundService, IOpcSubscribeService
                                 }
                                 catch (Exception ex)
                                 {
-                                    Console.WriteLine($"An Error occurred when attempting to migrate datetimes: {ex.Message}");
-                                    Console.Error.WriteLine($"An Error occurred when attempting to migrate datetimes: {ex.Message}");
+                                    Console.WriteLine($"{currentUtcTime}: An Error occurred when attempting to migrate datetimes: {ex.Message}");
+                                    Console.Error.WriteLine($"{currentUtcTime}: An Error occurred when attempting to migrate datetimes: {ex.Message}");
                                     transaction.Rollback();
                                 }
                             }
