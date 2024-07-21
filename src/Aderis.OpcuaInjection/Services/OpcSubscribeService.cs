@@ -313,7 +313,7 @@ public class OpcSubscribeService : BackgroundService, IOpcSubscribeService
                                     SELECT ctid
                                     FROM modvalues
                                     WHERE device = ANY(@devices)
-                                    FOR UPDATE
+                                    FOR UPDATE SKIP LOCKED
                                 )";
 
                             string currentUtcTime = DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ss.ffffff");
@@ -332,10 +332,11 @@ public class OpcSubscribeService : BackgroundService, IOpcSubscribeService
                                         transaction.Commit();
                                     }
                                 }
-                                catch (Exception ex)
+                                catch (NpgsqlException ex)
                                 {
                                     Console.WriteLine($"{currentUtcTime}: An Error occurred when attempting to migrate datetimes: {ex.Message}");
                                     Console.Error.WriteLine($"{currentUtcTime}: An Error occurred when attempting to migrate datetimes: {ex.Message}");
+                                    
                                     transaction.Rollback();
                                 }
                             }
