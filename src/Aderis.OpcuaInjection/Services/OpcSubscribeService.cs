@@ -301,26 +301,37 @@ public class OpcSubscribeService : BackgroundService, IOpcSubscribeService
                         }
 
                         string devices = string.Join(",", devicesToLock);
-                        Console.WriteLine($"Devices to Lock: {devices}");
+                        // Console.WriteLine($"Devices to Lock: {devices}");
                         Console.WriteLine(devices.Contains("DEV_54"));
 
                         if (devicesToLock.Count > 0)
                         {
+                            string selectLockedQuery = @"
+                                SELECT ctid
+                                FROM modvalues
+                                WHERE device = ANY(@devices)
+                                FOR UPDATE SKIP LOCKED;
+                            ";
+                            var lockedDeviceCtids = new List<string>();
+                            using (var selectCommand = new NpgsqlCommand(selectLockedQuery, connection))
+                            using (var reader = selectCommand.ExecuteReader())
+                            {
+                                while (reader.Read())
+                                {
+                                    lockedDeviceCtids.Add(reader.GetString(0));
+                                }
+                            }
+
+                            Console.WriteLine($"Length: {lockedDeviceCtids.Count()}");
+
                             // Lock rows with the devices found
                             // ctid = physical location of the row version within its table. Modified by VACUUM FULL.                            
                             string updateTimestampQuery = @"
                                 UPDATE modvalues
                                 SET last_updated = @lastUpdated
-                                WHERE device = ANY(@devices)
-                                AND ctid NOT IN (
-                                    SELECT ctid
-                                    FROM modvalues
-                                    WHERE device = ANY(@devices)
-                                    FOR UPDATE SKIP LOCKED
-                                )";
+                                WHERE ctid = ANY(@ctids)";
 
                             string currentUtcTime = DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ss.ffffff");
-
 
                             using (var transaction = connection.BeginTransaction())
                             {
@@ -328,7 +339,7 @@ public class OpcSubscribeService : BackgroundService, IOpcSubscribeService
                                 {
                                     using (var updateCommand = new NpgsqlCommand(updateTimestampQuery, connection, transaction))
                                     {
-                                        updateCommand.Parameters.AddWithValue("devices", devicesToLock.ToArray());
+                                        updateCommand.Parameters.AddWithValue("ctids", lockedDeviceCtids.ToArray());
                                         updateCommand.Parameters.AddWithValue("lastUpdated", currentUtcTime);
 
                                         int affectedRows = updateCommand.ExecuteNonQuery();
