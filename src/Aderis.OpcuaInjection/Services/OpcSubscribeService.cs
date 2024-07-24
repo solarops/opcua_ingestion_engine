@@ -568,13 +568,12 @@ public class OpcSubscribeService : BackgroundService, IOpcSubscribeService
             WHERE device = @device AND measure_name = @measure
             FOR UPDATE";
 
-        using (var selectCommand = new NpgsqlCommand(selectForUpdateQuery, connection))
+        using (var transaction = connection.BeginTransaction())
         {
-            selectCommand.Parameters.AddWithValue("device", daqName);
-            selectCommand.Parameters.AddWithValue("measure", measureName);
-
-            using (var transaction = connection.BeginTransaction())
+            using (var selectCommand = new NpgsqlCommand(selectForUpdateQuery, connection))
             {
+                selectCommand.Parameters.AddWithValue("device", daqName);
+                selectCommand.Parameters.AddWithValue("measure", measureName);
                 try
                 {
                     selectCommand.ExecuteNonQuery();
