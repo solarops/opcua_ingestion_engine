@@ -10,6 +10,11 @@ using Npgsql;
 
 namespace Aderis.OpcuaInjection.Services;
 
+/*
+    Consider implementing a queue (Kafka?) where the SubscribedItemChange and TimestampUpdate both push
+    needed changes and a timestamp to, and the queue reconciles which value gets set
+*/
+
 public class OpcSubscribeService : BackgroundService, IOpcSubscribeService
 {
     // Connection Agnostic State
@@ -320,7 +325,11 @@ public class OpcSubscribeService : BackgroundService, IOpcSubscribeService
                                 {
                                     while (reader.Read())
                                     {
-                                        lockedDeviceCtids.Add(reader.GetString(0));
+                                        var rawVal = reader.GetValue(0).ToString();
+                                        if (rawVal != null)
+                                        {
+                                            lockedDeviceCtids.Add(rawVal.ToString());
+                                        }
                                     }
                                 }
                             }
