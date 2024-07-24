@@ -7,7 +7,6 @@ using Opc.Ua;
 using Opc.Ua.Client;
 using System.Text.Json.Serialization;
 using Npgsql;
-using System.Data;
 
 namespace Aderis.OpcuaInjection.Services;
 
@@ -301,6 +300,10 @@ public class OpcSubscribeService : BackgroundService, IOpcSubscribeService
                             }
                         }
 
+                        string devices = string.Join(",", devicesToLock);
+                        Console.WriteLine($"Devices to Lock: {devices}");
+                        Console.WriteLine(devices.Contains("DEV_54"));
+
                         if (devicesToLock.Count > 0)
                         {
                             // Lock rows with the devices found
@@ -524,11 +527,6 @@ public class OpcSubscribeService : BackgroundService, IOpcSubscribeService
                 {
                     Console.WriteLine($"An Error occurred when saving device {opcItem.DaqName}, {opcItem.Config.MeasureName}: {ex}");
                 }
-
-
-
-
-
             }
         }
     }
