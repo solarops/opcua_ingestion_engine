@@ -314,11 +314,14 @@ public class OpcSubscribeService : BackgroundService, IOpcSubscribeService
                             ";
                             var lockedDeviceCtids = new List<string>();
                             using (var selectCommand = new NpgsqlCommand(selectLockedQuery, connection))
-                            using (var reader = selectCommand.ExecuteReader())
                             {
-                                while (reader.Read())
+                                selectCommand.Parameters.AddWithValue("devices", devicesToLock.ToArray());
+                                using (var reader = selectCommand.ExecuteReader())
                                 {
-                                    lockedDeviceCtids.Add(reader.GetString(0));
+                                    while (reader.Read())
+                                    {
+                                        lockedDeviceCtids.Add(reader.GetString(0));
+                                    }
                                 }
                             }
 
@@ -487,7 +490,7 @@ public class OpcSubscribeService : BackgroundService, IOpcSubscribeService
             foreach (var value in opcItem.DequeueValues())
             {
 
-                
+
                 OpcTemplatePointConfiguration config = opcItem.Config;
 
                 // ALEX: Commented-out timeout
