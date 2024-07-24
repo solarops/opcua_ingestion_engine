@@ -341,7 +341,7 @@ public class OpcSubscribeService : BackgroundService, IOpcSubscribeService
                             string updateTimestampQuery = @"
                                 UPDATE modvalues
                                 SET last_updated = @lastUpdated
-                                WHERE ctid = ANY(@ctids)";
+                                WHERE ctid = ANY(ARRAY[CAST(@ctids AS tid[])])";
 
                             string currentUtcTime = DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ss.ffffff");
 
