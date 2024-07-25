@@ -3,6 +3,7 @@ using Opc.Ua.Client;
 using Opc.Ua;
 using System.Text.Json;
 using System.Text;
+using System.Net.Sockets;
 
 namespace Aderis.OpcuaInjection.Helpers;
 
@@ -113,6 +114,33 @@ public class OpcuaHelperFunctions
             // Wait, Try again
             Thread.Sleep(1500);
             return await GetSessionByUrl(connectionUrl, iteration+1);
+        }
+    }
+
+    public static async Task<bool> IsServerAvailable(string serverUrl)
+    {
+        try
+        {
+            Uri uri = new Uri(serverUrl);
+            using (var tcpClient = new TcpClient())
+            {
+                await tcpClient.ConnectAsync(uri.Host, uri.Port);
+                return tcpClient.Connected;
+            }
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    public static void DisposeTimer(object sender)
+    {
+        if (sender is System.Timers.Timer timer)
+        {
+            timer.Stop();
+            timer.Dispose();
+            Console.WriteLine($"Timer stopped and disposed.");
         }
     }
 }

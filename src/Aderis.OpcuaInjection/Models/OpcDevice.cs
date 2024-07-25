@@ -53,6 +53,8 @@ public class OPCMonitoredItem : MonitoredItem
 
     // Includes Unit, TagName, MeasureName, ScaleMode
     public required OpcTemplatePointConfiguration Config { get; set; }
+
+    public required string ClientUrl { get; set; }
 }
 
 public class OPCSubscription : Subscription
