@@ -140,7 +140,7 @@ public class OpcuaHelperFunctions
         {
             timer.Stop();
             timer.Dispose();
-            Console.WriteLine($"Timer stopped and disposed.");
+            //Console.WriteLine($"Timer stopped and disposed.");
         }
     }
 }

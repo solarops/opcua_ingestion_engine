@@ -16,7 +16,7 @@ public class OpcuaSubscribe
     private static CancellationToken GlobalCancel = new();
     private static string ConnectionString = LoadConnectionString();
     private static Dictionary<string, OpcClientSubscribeConfig> connectionInfo = new(); 
-    private static Dictionary<string, Session> opcClients = new();
+    private static Dictionary<string, Session> opcClientsByUrl = new();
     private static Dictionary<string, Dictionary<string, List<OpcTemplatePointConfiguration>>> OpcTemplates = LoadOpcTemplates();
     private static OpcClientConfig OpcClientConfig = OpcuaHelperFunctions.LoadClientConfig();
     private static Dictionary<string, List<JSONGenericDevice>> SiteDevices = LoadSiteDevices();
@@ -156,7 +156,7 @@ public class OpcuaSubscribe
         Session existingSession = null;
 
         // Close connection/session if exists
-        if (opcClients.TryGetValue(serverUrl, out existingSession))
+        if (opcClientsByUrl.TryGetValue(serverUrl, out existingSession))
         {
             existingSession.Close();
             existingSession.Dispose();
@@ -289,7 +289,7 @@ public class OpcuaSubscribe
     private static void LogTimerStatus(string clientUrl, string action)
     {
         logCounter++;
-        if (action == "not found" || logCounter % 3000 == 0 ) //increase divisor to decrease message rate while debugging
+        if (logCounter % 3000 == 0 ) //increase divisor to decrease message rate while debugging
         {
             Console.WriteLine($"[{DateTime.UtcNow:HH:mm:ss.fff}] Timer for {clientUrl} {action}. (Log Counter: {logCounter})");
         }
@@ -517,7 +517,7 @@ public class OpcuaSubscribe
             Session session = await OpcuaHelperFunctions.GetSessionByUrl(serverUrl);
 
             //add new session to opcClient dict, and make corresponding cancel token
-            opcClients[serverUrl] = session; 
+            opcClientsByUrl[serverUrl] = session; 
             serverCancellationTokens[serverUrl] = new CancellationTokenSource();
 
             var subscription = new OPCSubscription()
@@ -849,8 +849,15 @@ public class OpcuaSubscribe
         }
         catch (OperationCanceledException ex)
         {
+            //change this to work by going thru opcclients by url keys and calling stop server activities 
+            foreach (var timer in opcTimeoutTimers.Values)
+            {
+                OpcuaHelperFunctions.DisposeTimer(timer);
+            }
+            opcTimeoutTimers.Clear();
+
             // Been cancelled.
-            foreach (Session session in opcClients.Values)
+            foreach (Session session in opcClientsByUrl.Values)
             {
                 session.Close();
                 session.Dispose();
@@ -877,7 +884,7 @@ public class OpcuaSubscribe
             Console.WriteLine($"Process Crashed! {ex}");
             Console.WriteLine(ex.StackTrace);
             // any other exception
-            foreach (Session session in opcClients.Values)
+            foreach (Session session in opcClientsByUrl.Values)
             {
                 session.Close();
                 session.Dispose();
