@@ -514,41 +514,43 @@ public class OpcSubscribeService : BackgroundService, IOpcSubscribeService
                 */
 
                 string timestamp = DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ss.ffffff");
-
-                try
+                if (Math.Abs((DateTime.UtcNow - value.SourceTimestamp).TotalMilliseconds) <= subscription.TimeoutMs)
                 {
-                    if (StatusCode.IsGood(value.StatusCode))
+                    try
                     {
-                        double scaledValue = Convert.ToDouble(value.Value);
-                        OpcTemplatePointConfigurationSlope AutoScaling = config.AutoScaling;
-
-                        switch (AutoScaling.ScaleMode)
+                        if (StatusCode.IsGood(value.StatusCode))
                         {
-                            case "slope_intercept":
-                                scaledValue = Math.Round((scaledValue * AutoScaling.Slope) + AutoScaling.Offset, 3);
-                                break;
-                            case "point_slope":
-                                scaledValue = Math.Round((AutoScaling.TargetMax - AutoScaling.TargetMin) / (AutoScaling.ValueMax - AutoScaling.ValueMin) * (scaledValue - AutoScaling.ValueMin) + AutoScaling.TargetMin, 3);
-                                break;
+                            double scaledValue = Convert.ToDouble(value.Value);
+                            OpcTemplatePointConfigurationSlope AutoScaling = config.AutoScaling;
+
+                            switch (AutoScaling.ScaleMode)
+                            {
+                                case "slope_intercept":
+                                    scaledValue = Math.Round((scaledValue * AutoScaling.Slope) + AutoScaling.Offset, 3);
+                                    break;
+                                case "point_slope":
+                                    scaledValue = Math.Round((AutoScaling.TargetMax - AutoScaling.TargetMin) / (AutoScaling.ValueMax - AutoScaling.ValueMin) * (scaledValue - AutoScaling.ValueMin) + AutoScaling.TargetMin, 3);
+                                    break;
+                            }
+
+                            ModifyMeasure(connection, config.MeasureName, opcItem.DaqName, scaledValue, timestamp);
+
+                            // Got a new Measure, need to set myPV_online
+                            ModifyMeasure(connection, myPVOnlineTag.MeasureName, opcItem.DaqName, 1.0, timestamp);
                         }
+                        else
+                        {
+                            // Set myPV_online to false now
+                            ModifyMeasure(connection, myPVOnlineTag.MeasureName, opcItem.DaqName, 0.0, timestamp);
 
-                        ModifyMeasure(connection, config.MeasureName, opcItem.DaqName, scaledValue, timestamp);
-
-                        // Got a new Measure, need to set myPV_online
-                        ModifyMeasure(connection, myPVOnlineTag.MeasureName, opcItem.DaqName, 1.0, timestamp);
+                            // Re-evaluate: Should we write "null" to this point? Or just leave as-is?
+                            // ModifyMeasure(connection, config.MeasureName, opcItem.DaqName, null, DateTime.UtcNow);
+                        }
                     }
-                    else
+                    catch (Exception ex)
                     {
-                        // Set myPV_online to false now
-                        ModifyMeasure(connection, myPVOnlineTag.MeasureName, opcItem.DaqName, 0.0, DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ss.ffffff"));
-
-                        // Re-evaluate: Should we write "null" to this point? Or just leave as-is?
-                        // ModifyMeasure(connection, config.MeasureName, opcItem.DaqName, null, DateTime.UtcNow);
+                        Console.WriteLine($"An Error occurred when saving device {opcItem.DaqName}, {opcItem.Config.MeasureName}: {ex}");
                     }
-                }
-                catch (Exception ex)
-                {
-                    Console.WriteLine($"An Error occurred when saving device {opcItem.DaqName}, {opcItem.Config.MeasureName}: {ex}");
                 }
             }
         }
