@@ -364,6 +364,9 @@ public class OpcSubscribeService : BackgroundService, IOpcSubscribeService
                                         updateOnline = updateCommand.ExecuteNonQuery();
                                     }
 
+                                    Console.WriteLine(updateOnline);
+                                    Console.WriteLine(updateMeasures);
+
                                     if (updateOnline > 0 && updateMeasures > 0)
                                     {
                                         transaction.Commit();
