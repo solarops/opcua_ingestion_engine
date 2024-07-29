@@ -7,6 +7,7 @@ using Opc.Ua;
 using Opc.Ua.Client;
 using System.Text.Json.Serialization;
 using Npgsql;
+// using ConcurrentCollections;
 
 namespace Aderis.OpcuaInjection.Services;
 
@@ -32,12 +33,17 @@ public class OpcSubscribeService : BackgroundService, IOpcSubscribeService
         TagName = "myPV_online"
     };
 
+    // private ConcurrentHashSet<string> _offlineSet;
+    // private ConcurrentHashSet<string> _onlineSet;
+
     public OpcSubscribeService(IOpcHelperService opcHelperService)
     {
         _opcHelperService = opcHelperService;
         _opcTemplates = LoadOpcTemplates();
         _siteDevices = LoadSiteDevices();
         _dbConnectionString = LoadConnectionString();
+        // _offlineSet = new();
+        // _onlineSet = new();
     }
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -285,8 +291,6 @@ public class OpcSubscribeService : BackgroundService, IOpcSubscribeService
                     using (var connection = new NpgsqlConnection(_dbConnectionString))
                     {
                         connection.Open();
-
-
                         // Query the rows with measure_name == "myPV_online" and measure_value == 1
                         // DISTINCT: removes multiple duplicate rows from a result set
                         string selectDevicesQuery = @"
@@ -305,56 +309,63 @@ public class OpcSubscribeService : BackgroundService, IOpcSubscribeService
                             }
                         }
 
-                        string devices = string.Join(",", devicesToLock);
-                        // Console.WriteLine($"Devices to Lock: {devices}");
-                        Console.WriteLine(devices.Contains("DEV_54"));
-
                         if (devicesToLock.Count > 0)
                         {
-                            string selectLockedQuery = @"
-                                SELECT ctid
-                                FROM modvalues
-                                WHERE device = ANY(@devices)
-                                FOR UPDATE SKIP LOCKED;
-                            ";
-                            var lockedDeviceCtids = new List<string>();
-                            using (var selectCommand = new NpgsqlCommand(selectLockedQuery, connection))
-                            {
-                                selectCommand.Parameters.AddWithValue("devices", devicesToLock.ToArray());
-                                using (var reader = selectCommand.ExecuteReader())
-                                {
-                                    while (reader.Read())
-                                    {
-                                        var rawVal = reader.GetValue(0).ToString();
-                                        if (rawVal != null)
-                                        {
-                                            lockedDeviceCtids.Add(rawVal.ToString());
-                                        }
-                                    }
-                                }
-                            }
-
-                            Console.WriteLine($"Length: {lockedDeviceCtids.Count()}");
-
-                            // Lock rows with the devices found
-                            // ctid = physical location of the row version within its table. Modified by VACUUM FULL.                            
-                            string updateTimestampQuery = @"
-                                UPDATE modvalues
-                                SET last_updated = @lastUpdated
-                                WHERE ctid = ANY(ARRAY[CAST(@ctids AS tid[])])";
-
                             string currentUtcTime = DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ss.ffffff");
-
                             using (var transaction = connection.BeginTransaction())
                             {
                                 try
                                 {
-                                    using (var updateCommand = new NpgsqlCommand(updateTimestampQuery, connection, transaction))
-                                    {
-                                        updateCommand.Parameters.AddWithValue("ctids", lockedDeviceCtids.ToArray());
-                                        updateCommand.Parameters.AddWithValue("lastUpdated", currentUtcTime);
+                                    // Lock rows with the devices found
+                                    // string lockQuery = @"
+                                    //     SELECT * 
+                                    //     FROM modvalues 
+                                    //     WHERE device = ANY(@devices) 
+                                    //     FOR UPDATE";
 
-                                        int affectedRows = updateCommand.ExecuteNonQuery();
+                                    // using (var lockCommand = new NpgsqlCommand(lockQuery, connection, transaction))
+                                    // {
+                                    //     lockCommand.Parameters.AddWithValue("devices", devicesToLock.ToArray());
+                                    //     lockCommand.ExecuteNonQuery();
+                                    // }
+
+                                    // Update measures then myPV_online.
+
+                                    // Update the last_updated value for the locked rows
+                                    string updateQuery = @"
+                                        UPDATE modvalues 
+                                        SET last_updated = @currentTime 
+                                        WHERE device = ANY(@devices)
+                                        AND measure_name != 'myPV_online'";
+                                    
+                                    var updateMeasures = 0;
+                                    using (var updateCommand = new NpgsqlCommand(updateQuery, connection, transaction))
+                                    {
+                                        // Use parameterized query to prevent SQL injection
+                                        updateCommand.Parameters.AddWithValue("currentTime", currentUtcTime);
+                                        updateCommand.Parameters.AddWithValue("devices", devicesToLock.ToArray());
+
+                                        updateMeasures = updateCommand.ExecuteNonQuery();
+                                    }
+
+                                    string updateOnlineQuery = @"
+                                        UPDATE modvalues 
+                                        SET last_updated = @currentTime 
+                                        WHERE device = ANY(@devices)
+                                        AND measure_name = 'myPV_online'";
+                                    
+                                    var updateOnline = 0;
+                                    using (var updateCommand = new NpgsqlCommand(updateOnlineQuery, connection, transaction))
+                                    {
+                                        // Use parameterized query to prevent SQL injection
+                                        updateCommand.Parameters.AddWithValue("currentTime", currentUtcTime);
+                                        updateCommand.Parameters.AddWithValue("devices", devicesToLock.ToArray());
+
+                                        updateOnline = updateCommand.ExecuteNonQuery();
+                                    }
+
+                                    if (updateOnline > 0 && updateMeasures > 0)
+                                    {
                                         transaction.Commit();
                                     }
                                 }
@@ -537,6 +548,7 @@ public class OpcSubscribeService : BackgroundService, IOpcSubscribeService
 
                             // Got a new Measure, need to set myPV_online
                             ModifyMeasure(connection, myPVOnlineTag.MeasureName, opcItem.DaqName, 1.0, timestamp);
+                            // _onlineSet.Add(opcItem.DaqName);
                         }
                         else
                         {
@@ -545,6 +557,7 @@ public class OpcSubscribeService : BackgroundService, IOpcSubscribeService
 
                             // Re-evaluate: Should we write "null" to this point? Or just leave as-is?
                             // ModifyMeasure(connection, config.MeasureName, opcItem.DaqName, null, DateTime.UtcNow);
+                            // _offlineSet.Add(opcItem.DaqName);
                         }
                     }
                     catch (Exception ex)
