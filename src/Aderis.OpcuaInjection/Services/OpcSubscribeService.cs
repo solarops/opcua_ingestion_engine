@@ -343,8 +343,7 @@ public class OpcSubscribeService : BackgroundService, IOpcSubscribeService
                                     string updateOnlineQuery = @"
                                         UPDATE modvalues 
                                         SET last_updated = @currentTime 
-                                        WHERE device = ANY(@devices)
-                                        AND measure_name = 'myPV_online'";
+                                        WHERE device = ANY(@devices)";
 
                                     var updateOnline = 0;
                                     using (var updateCommand = new NpgsqlCommand(updateOnlineQuery, connection, transaction))
@@ -354,24 +353,9 @@ public class OpcSubscribeService : BackgroundService, IOpcSubscribeService
                                         updateCommand.Parameters.AddWithValue("devices", devicesToLock.ToArray());
                                         updateOnline = updateCommand.ExecuteNonQuery();
                                     }
+                                   
 
-                                    // Update the last_updated value for the locked rows
-                                    string updateQuery = @"
-                                        UPDATE modvalues 
-                                        SET last_updated = @currentTime 
-                                        WHERE device = ANY(@devices)
-                                        AND measure_name != 'myPV_online'";
-
-                                    var updateMeasures = 0;
-                                    using (var updateCommand = new NpgsqlCommand(updateQuery, connection, transaction))
-                                    {
-                                        // Use parameterized query to prevent SQL injection
-                                        updateCommand.Parameters.AddWithValue("currentTime", currentUtcTime);
-                                        updateCommand.Parameters.AddWithValue("devices", devicesToLock.ToArray());
-                                        updateMeasures = updateCommand.ExecuteNonQuery();
-                                    }
-
-                                    if (updateOnline > 0 && updateMeasures > 0)
+                                    if (updateOnline > 0)
                                     {
                                         transaction.Commit();
                                     }
