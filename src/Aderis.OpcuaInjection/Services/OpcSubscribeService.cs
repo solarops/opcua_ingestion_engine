@@ -8,12 +8,17 @@ using Opc.Ua.Client;
 using System.Text.Json.Serialization;
 using Npgsql;
 using System.Data;
-// using ConcurrentCollections;
+using System.Timers;
+using System.Net.Sockets;
 
 namespace Aderis.OpcuaInjection.Services;
 
 /*
-    Consider implementing a queue (Kafka?) where the SubscribedItemChange and TimestampUpdate both push
+    NOTE: For site with slow updating devices, the timeout may need to be extended, as the timeout callback is in
+    danger of being fired.
+        - Have the main loop ask for a "alive?" message to servers every x sec
+
+    NOTE: Consider implementing a queue (Kafka?) where the SubscribedItemChange and TimestampUpdate both push
     needed changes and a timestamp to, and the queue reconciles which value gets set
 */
 
@@ -27,14 +32,11 @@ public class OpcSubscribeService : BackgroundService, IOpcSubscribeService
     private Dictionary<string, Dictionary<string, List<OpcTemplatePointConfiguration>>> _opcTemplates;
     private Dictionary<string, List<JSONGenericDevice>> _siteDevices;
     private string _dbConnectionString;
-    
-    private static Dictionary<string, OpcClientSubscribeConfig> _connectionInfo = new(); 
-    private static Dictionary<string, Session> _opcClientsByUrl = new();
-
-    private static Dictionary<string, System.Timers.Timer> _opcTimeoutTimers = new();
-    private static readonly TimeSpan _opcTimeoutPeriod = TimeSpan.FromMinutes(3);  //time period allowed of 0 SubscribedItemChange events before assuming server connection down (1 min works fine too)
-    private static Dictionary<string, CancellationTokenSource> _serverCancellationTokens = new(); //seperate cancellation tokens for each opc server.
-
+    private readonly IHostEnvironment _env;
+    private Dictionary<string, OpcClientSubscribeConfig> _connectionInfo = new();
+    private Dictionary<string, Session> _opcClientsByUrl = new();
+    private Dictionary<string, System.Timers.Timer> _opcTimeoutTimers = new();
+    private readonly TimeSpan _opcTimeoutPeriod = TimeSpan.FromSeconds(10);
 
     /// <summary>
     /// Represents the online/offline status tag for device
@@ -51,38 +53,28 @@ public class OpcSubscribeService : BackgroundService, IOpcSubscribeService
         TagName = "myPV_online"
     };
 
-    // private ConcurrentHashSet<string> _offlineSet;
-    // private ConcurrentHashSet<string> _onlineSet;
-
-    public OpcSubscribeService(IOpcHelperService opcHelperService)
+    public OpcSubscribeService(IOpcHelperService opcHelperService, IHostEnvironment env)
     {
+        _env = env;
         _opcHelperService = opcHelperService;
         _opcTemplates = LoadOpcTemplates();
         _siteDevices = LoadSiteDevices();
         _dbConnectionString = LoadConnectionString();
-        // _offlineSet = new();
-        // _onlineSet = new();
     }
+
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         await Start(stoppingToken);
     }
-
-    // public Task StartSubscribe(CancellationToken stoppingToken)
-    // {
-    //     return ExecuteAsync(stoppingToken);
-    // }
 
     public void ReloadPolling()
     {
         _fileSystemReloadCancel.Cancel();
     }
 
-    private async Task Start(CancellationToken GlobalStop)
+    private async Task Start(CancellationToken StoppingToken)
     {
-        // Register Passed 
-        _globalCancel = GlobalStop;
-
+        _globalCancel = StoppingToken;
         // Set the directory to monitor
         _watcher.Path = OpcuaHelperFunctions.SosConfigPrefix;
 
@@ -250,10 +242,6 @@ public class OpcSubscribeService : BackgroundService, IOpcSubscribeService
                                 }
 
                                 string timestamp = DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ss.ffffff");
-
-                                // Set online to false until we get an update
-                                //(now handled below in setFalseAllMyPVOnlineinneficient)
-                                //ModifyMeasure(connection, myPVOnlineTag.MeasureName, device.DaqName, 0.0, timestamp); 
                             }
                             catch (Exception ex)
                             {
@@ -284,6 +272,7 @@ public class OpcSubscribeService : BackgroundService, IOpcSubscribeService
             catch (Exception ex)
             {
                 Console.WriteLine($"Failed to subscribe to server {serverUrl}: {ex.Message}");
+                return;
             }
         }
 
@@ -352,7 +341,7 @@ public class OpcSubscribeService : BackgroundService, IOpcSubscribeService
                                     }
 
                                     // Update last_updated value for measures then myPV_online.
-                                    
+
                                     string updateOnlineQuery = @"
                                         UPDATE modvalues 
                                         SET last_updated = @currentTime 
@@ -366,7 +355,6 @@ public class OpcSubscribeService : BackgroundService, IOpcSubscribeService
                                         updateCommand.Parameters.AddWithValue("devices", devicesToLock.ToArray());
                                         updateOnline = updateCommand.ExecuteNonQuery();
                                     }
-                                   
 
                                     if (updateOnline > 0)
                                     {
@@ -402,7 +390,7 @@ public class OpcSubscribeService : BackgroundService, IOpcSubscribeService
             //dispose all server timers
             foreach (var timer in _opcTimeoutTimers.Values)
             {
-                OpcuaHelperFunctions.DisposeTimer(timer);
+                DisposeTimer(timer);
             }
             _opcTimeoutTimers.Clear();
 
@@ -415,14 +403,13 @@ public class OpcSubscribeService : BackgroundService, IOpcSubscribeService
 
             if (ex.CancellationToken.Equals(_globalCancel))
             {
+                Console.WriteLine("Global, returning.");
                 // Global Cancel
                 return;
             }
 
             // Reset
             _fileSystemReloadCancel = new CancellationTokenSource();
-
-            // Console.WriteLine("Resetting....");
 
             // restart
             // artificial 1s delay
@@ -437,7 +424,7 @@ public class OpcSubscribeService : BackgroundService, IOpcSubscribeService
             //dispose all server timers
             foreach (var timer in _opcTimeoutTimers.Values)
             {
-                OpcuaHelperFunctions.DisposeTimer(timer);
+                DisposeTimer(timer);
             }
             _opcTimeoutTimers.Clear();
 
@@ -477,14 +464,11 @@ public class OpcSubscribeService : BackgroundService, IOpcSubscribeService
 
     private Dictionary<string, Dictionary<string, List<OpcTemplatePointConfiguration>>> LoadOpcTemplates()
     {
-        // string rawTemplates = OpcuaHelperFunctions.GetFileTextLock($"{OpcuaHelperFunctions.SosConfigPrefix}/sos_templates_opcua.json");
         return DeserializeJson<Dictionary<string, Dictionary<string, List<OpcTemplatePointConfiguration>>>>($"{OpcuaHelperFunctions.SosConfigPrefix}/sos_templates_opcua.json");
-
     }
 
     private Dictionary<string, List<JSONGenericDevice>> LoadSiteDevices()
     {
-        // string rawSiteDevices = OpcuaHelperFunctions.GetFileTextLock($"{OpcuaHelperFunctions.SosConfigPrefix}/site_devices.json");
         return DeserializeJson<Dictionary<string, List<JSONGenericDevice>>>($"{OpcuaHelperFunctions.SosConfigPrefix}/site_devices.json");
     }
 
@@ -492,14 +476,14 @@ public class OpcSubscribeService : BackgroundService, IOpcSubscribeService
     {
         DbConfig dbConfig = DeserializeJson<DbConfig>($"{OpcuaHelperFunctions.SosConfigPrefix}/plant_config.json");
         var connection = dbConfig.Connection;
-        var builder = new NpgsqlConnectionStringBuilder()
+        var builder = new NpgsqlConnectionStringBuilder
         {
             Host = connection.Server,
             Port = Int32.Parse(connection.Port),
             Database = connection.Database,
             Username = connection.Username,
             Password = connection.Password,
-            IncludeErrorDetail = true
+            IncludeErrorDetail = _env.IsDevelopment()
         };
 
         return builder.ToString();
@@ -516,7 +500,6 @@ public class OpcSubscribeService : BackgroundService, IOpcSubscribeService
             case "site_devices.json":
                 Console.WriteLine("Devices changed...");
                 _siteDevices = LoadSiteDevices();
-                // Console.WriteLine("Deserialized SiteDevices...");
                 goto case "CHANGED";
             case "CHANGED":
                 // Synchronously cancel
@@ -539,13 +522,7 @@ public class OpcSubscribeService : BackgroundService, IOpcSubscribeService
         {
             _opcTimeoutTimers[clientUrl].Stop();
             _opcTimeoutTimers[clientUrl].Start();
-            //LogTimerStatus(clientUrl, "reset");
         }
-        else
-        {
-            //LogTimerStatus(clientUrl, "not found");
-        }
-
 
         var subscription = (OPCSubscription)item.Subscription;
 
@@ -555,10 +532,8 @@ public class OpcSubscribeService : BackgroundService, IOpcSubscribeService
             foreach (var value in opcItem.DequeueValues())
             {
 
-
                 OpcTemplatePointConfiguration config = opcItem.Config;
 
-                // ALEX: Commented-out timeout
                 /*
                 Explanation:
                     - If we have no way of historizing at value.SourceTimestamp, why store it as it?
@@ -729,10 +704,10 @@ public class OpcSubscribeService : BackgroundService, IOpcSubscribeService
 
     //Used on startup to set all myPV_online tags to 0
     //more effecient than 1 at time modifyMeasure and removes outdated online devices due to bad disconnect or acuity side reconfigs
-    private static async Task SetAllMyPVOnlineFalse(NpgsqlConnection connection)
+    private async Task SetAllMyPVOnlineFalse(NpgsqlConnection connection)
     {
         string formattedUtcNow = DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ss.ffffff");
-        
+
         string updateQuery = @"
             UPDATE modvalues
             SET 
@@ -754,151 +729,150 @@ public class OpcSubscribeService : BackgroundService, IOpcSubscribeService
     }
 
 
-//-----------------REFACTORED SUBSCRIBE METHOD BELOW-----------------
-
+    //-----------------REFACTORED SUBSCRIBE METHOD BELOW-----------------
     private async Task<Session> SubscribeToOpcServer(string serverUrl, OpcClientSubscribeConfig config, bool isResubscribe = false)
     {
-        //Console.WriteLine($"In SubscribeToOpcServer for {serverUrl}");
-        try
+        //within get session by url it tries 5 times to get a session
+        Session session = await OpcuaHelperFunctions.GetSessionByUrl(serverUrl, config.UserIdentity);
+
+        //add new session to opcClient dict, and make corresponding cancel token
+        _opcClientsByUrl[serverUrl] = session;
+
+        var subscription = new OPCSubscription()
         {
-            //within get session by url it tries 5 times to get a session
-            Session session = await OpcuaHelperFunctions.GetSessionByUrl(serverUrl, config.UserIdentity);
+            DisplayName = $"Subscription to {serverUrl}",
+            PublishingEnabled = true,
+            PublishingInterval = 1000,
+            LifetimeCount = 0,
+            MinLifetimeInterval = 120_000,
+            TimeoutMs = config.TimeoutMs
+        };
 
-            //add new session to opcClient dict, and make corresponding cancel token
-            _opcClientsByUrl[serverUrl] = session; 
-            _serverCancellationTokens[serverUrl] = new CancellationTokenSource();
+        var points = new List<OPCMonitoredItem>();
 
-            var subscription = new OPCSubscription()
+        //if resubscribe, need to make new instances of monitor items for points to get updates/call SubcribedItemChange 
+        if (isResubscribe)
+        {
+            foreach (var oldPoint in config.points)
             {
-                DisplayName = $"Subscription to {serverUrl}",
-                PublishingEnabled = true,
-                PublishingInterval = 1000,
-                LifetimeCount = 0,
-                MinLifetimeInterval = 120_000,
-                TimeoutMs = config.TimeoutMs
-            };
-
-            var points = new List<OPCMonitoredItem>();
-
-            //if resubscribe, need to make new instances of monitor items for points to get updates/call SubcribedItemChange 
-            if(isResubscribe)
-            {
-                foreach (var oldPoint in config.points)
+                OPCMonitoredItem oPCMonitoredItem = new OPCMonitoredItem()
                 {
-                    OPCMonitoredItem oPCMonitoredItem = new OPCMonitoredItem()
-                    {
-                        DaqName = oldPoint.DaqName,
-                        Config = oldPoint.Config,
-                        ClientUrl = oldPoint.ClientUrl,
-                        StartNodeId = oldPoint.StartNodeId,
-                        AttributeId = oldPoint.AttributeId,
-                        DisplayName = oldPoint.DisplayName,
-                        SamplingInterval = oldPoint.SamplingInterval,
-                        QueueSize = oldPoint.QueueSize,
-                        DiscardOldest = oldPoint.DiscardOldest,
-                        MonitoringMode = oldPoint.MonitoringMode,
-                        Filter = oldPoint.Filter
-                    };
-                    oPCMonitoredItem.Notification += SubscribedItemChange;
-                    points.Add(oPCMonitoredItem);
-                    //here we could update connectionInfo[serverUrl].points to be current,
-                    // but at this stage in code (after startup) its only used to provide the monitor item point info when reinit them on resub
-                }
+                    DaqName = oldPoint.DaqName,
+                    Config = oldPoint.Config,
+                    ClientUrl = oldPoint.ClientUrl,
+                    StartNodeId = oldPoint.StartNodeId,
+                    AttributeId = oldPoint.AttributeId,
+                    DisplayName = oldPoint.DisplayName,
+                    SamplingInterval = oldPoint.SamplingInterval,
+                    QueueSize = oldPoint.QueueSize,
+                    DiscardOldest = oldPoint.DiscardOldest,
+                    MonitoringMode = oldPoint.MonitoringMode,
+                    Filter = oldPoint.Filter
+                };
+                oPCMonitoredItem.Notification += SubscribedItemChange;
+                points.Add(oPCMonitoredItem);
+                //here we could update connectionInfo[serverUrl].points to be current,
+                // but at this stage in code (after startup) its only used to provide the monitor item point info when reinit them on resub
             }
-            else
-            {
-                points = config.points;
-            }
-
-            session.AddSubscription(subscription);
-            subscription.Create();
-            subscription.AddItems(points); //subscribe to each data stream of each device obtained from site_devices.json
-            subscription.ApplyChanges();
-
-            //initialize/start an opc timer right before subscriptions for that server start
-            var timer = InitializeOpcTimeoutTimer(serverUrl);
-            Console.WriteLine($"Timer for {serverUrl} started.");
-            _opcTimeoutTimers[serverUrl] = timer;
-
-            return session;
         }
-        catch (Exception ex)
+        else
         {
-            Console.WriteLine($"Failed to subscribe to OPC UA server {serverUrl}: {ex.Message}");
-            return null;
+            points = config.points;
         }
+
+        session.AddSubscription(subscription);
+        subscription.Create();
+        subscription.AddItems(points); //subscribe to each data stream of each device obtained from site_devices.json
+        subscription.ApplyChanges();
+
+        //initialize/start an opc timer right before subscriptions for that server start
+        var timer = InitializeOpcTimeoutTimer(serverUrl);
+        Console.WriteLine($"Timeout timer for {serverUrl} started.");
+        _opcTimeoutTimers[serverUrl] = timer;
+
+        return session;
     }
 
-
-//-----------------OPC UA SERVER RECONNECT CODE BELOW-----------------
-
-
+    //-----------------OPC UA SERVER RECONNECT CODE BELOW-----------------
     public System.Timers.Timer InitializeOpcTimeoutTimer(string serverUrl)
     {
         Console.WriteLine($"Initializing OPC UA server timeout timer for {serverUrl}...");
         var timer = new System.Timers.Timer(_opcTimeoutPeriod.TotalMilliseconds);
-        timer.Elapsed += (sender, e) => OnOpcTimeout(sender, e, serverUrl);
+        // Null check, do not want to make On
+        timer.Elapsed += (sender, e) => { if (sender != null) OnOpcTimeout(sender, e, serverUrl); };
         timer.AutoReset = false; // Once elapsed, do not restart
         timer.Start();
         return timer;
     }
 
-    private bool AreAllServersDown()
-    {
-        return _serverCancellationTokens.All(cts => cts.Value.Token.IsCancellationRequested);
-    }
-
-    private async void OnOpcTimeout(object sender, System.Timers.ElapsedEventArgs e, string serverUrl)
+    private async void OnOpcTimeout(object sender, ElapsedEventArgs e, string serverUrl)
     {
         Console.WriteLine($"TIMER ELAPSED / OnOpcTimeout called for {serverUrl}.");
 
         // Dispose of the timer that just elapsed
-        OpcuaHelperFunctions.DisposeTimer(sender);
+        DisposeTimer(sender);
         _opcTimeoutTimers.Remove(serverUrl);
-
-        //step 1 - flag server as down
-        if (_serverCancellationTokens.TryGetValue(serverUrl, out var cts))
-        {
-            cts.Cancel();
-        }
-        //step 2 - check if all servers are down
-        if (AreAllServersDown())
-        {
-            Console.WriteLine("All OPC UA servers are down. Will continue individual server reconnection attempts.");
-            //currently ignore and just try reconnect on individual server basis when they get back online)
-            //FileSystemReloadCancel.Cancel();
-            //return;
-        }
-        //step 3 - ensure server session stopped and rows marked offline
+        
         await StopServerActivities(serverUrl);
 
-        //step 4 - begin checking for when server back up and then try reconnecting
         await MonitorAndRestartServer(serverUrl);
     }
-    // private static int tcpCheckCount = 0;
+    private async Task<bool> IsServerAvailable(string serverUrl)
+    {
+        try
+        {
+            Uri uri = new Uri(serverUrl);
+            using (var tcpClient = new TcpClient())
+            {
+                await tcpClient.ConnectAsync(uri.Host, uri.Port);
+                return tcpClient.Connected;
+            }
+        }
+        catch
+        {
+            return false;
+        }
+    }
+    private void DisposeTimer(object sender)
+    {
+        if (sender is System.Timers.Timer timer)
+        {
+            timer.Stop();
+            timer.Dispose();
+            //Console.WriteLine($"Timer stopped and disposed.");
+        }
+    }
     private async Task MonitorAndRestartServer(string serverUrl)
     {
-        //Console.WriteLine($"In MonitorAndRestartServer for {serverUrl}");
-        int delayMilliseconds = 1000;  // Start with a 1-second delay between OPC UA connection attempts
+        // Tcp retries follow a (i1, delta1) -> (i2, delta2) pattern, where delta1 is the min sleep time while delta2 is the max.
+        // OPCUA retries follow an exponential pattern (2^(base 0 iteration) * 1000)
+
+        // Start with a 1-second delay between OPC UA connection attempts
+        int opcDelaySeconds = 1;
+
+        // hard-coded values
+        // begin with 30s
+        float baseDelaySeconds = 30;
+        float tcpSecondsDelay = baseDelaySeconds;
+        int tcpIteration = 1;
+        float TcpDeltaSeconds1 = baseDelaySeconds;
+        float TcpDeltaIterations1 = 100;
+        float firstLegSlope = (TcpDeltaSeconds1 - baseDelaySeconds) / (TcpDeltaIterations1 - tcpIteration);
+        float TcpDeltaSeconds2 = 600;
+        float TcpDeltaIterations2 = 200;
+        float secondLegSlope = (TcpDeltaSeconds2 - TcpDeltaSeconds1) / (TcpDeltaIterations2 - TcpDeltaIterations1);
 
         //loop contiously but allow for outside cancellation (currently only gets cancelled tokens when server is up and then goes down)
-        while (!_serverCancellationTokens[serverUrl].IsCancellationRequested)
+        while (true)
         {
-            // Check TCP connectivity first
-            // tcpCheckCount++;
-            // if (tcpCheckCount  % 1 == 0) //increase to reduce amount of prints while debugging
-            // {
-            //     Console.WriteLine($"Checking TCP connectivity for {serverUrl}... Attempt: {tcpCheckCount}");
-            // }
-            bool serverAvailable = await OpcuaHelperFunctions.IsServerAvailable(serverUrl);
+            bool serverAvailable = await IsServerAvailable(serverUrl);
 
             if (serverAvailable)
             {
                 Console.WriteLine($"TCP connection established for {serverUrl}. Starting OPC UA connection attempts.");
-                int opcConnectionAttempts = 0;
 
                 // Attempt OPC UA connections with exponential backoff
-                while (serverAvailable && !_serverCancellationTokens[serverUrl].IsCancellationRequested)
+                while (true)
                 {
                     try
                     {
@@ -908,62 +882,64 @@ public class OpcSubscribeService : BackgroundService, IOpcSubscribeService
                     }
                     catch (Exception ex)
                     {
-                        opcConnectionAttempts++;
                         Console.WriteLine($"Error during server restart for {serverUrl}: {ex.Message}");
-                        Console.WriteLine($"Retrying in {delayMilliseconds / 1000} seconds...");
+                        Console.WriteLine($"Retrying in {opcDelaySeconds} seconds...");
 
-                        await Task.Delay(delayMilliseconds);
-                        delayMilliseconds *= 2;  // Double the delay for the next attempt
+                        Thread.Sleep(opcDelaySeconds * 1000);
+                        opcDelaySeconds *= 2;  // Double the delay for the next attempt
 
                         // Re-check TCP connectivity to ensure the server is still available
-                        serverAvailable = await OpcuaHelperFunctions.IsServerAvailable(serverUrl);
+                        serverAvailable = await IsServerAvailable(serverUrl);
                         if (!serverAvailable)
                         {
                             Console.WriteLine($"Lost TCP connectivity for {serverUrl}. Rechecking TCP...");
-                            delayMilliseconds = 1000;  // Reset delay when TCP goes back up
+                            opcDelaySeconds = 1;  // Reset delay when TCP goes back up
+                            tcpSecondsDelay = baseDelaySeconds;
+                            tcpIteration = 1;
                             break;  // Exit OPC UA retry loop and re-check TCP connectivity
                         }
                     }
+                    
+                    // return from function if inside here.
+                    if (_globalCancel.IsCancellationRequested) return;
                 }
             }
             else
             {
-                //Console.WriteLine($"Server {serverUrl} not yet available. Checking again in 30 seconds.");
-                await Task.Delay(TimeSpan.FromSeconds(30));  // Check every 30 seconds
+                Thread.Sleep((int)(tcpSecondsDelay * 1000));
+                
+                if (tcpIteration >= TcpDeltaIterations2)
+                {
+                    tcpSecondsDelay = TcpDeltaSeconds2;
+                }
+                else if (tcpIteration >= TcpDeltaIterations1)
+                {
+                    tcpSecondsDelay += secondLegSlope;
+                }
+                else if (tcpIteration >= 1)
+                {
+                    tcpSecondsDelay += firstLegSlope;
+                }
+                tcpIteration += 1;
             }
+            
+            // return from function if inside here.
+            if (_globalCancel.IsCancellationRequested) return;
         }
     }
 
     private async Task StopServerActivities(string serverUrl)
     {
-        //Console.WriteLine($"In StopServerActivities for {serverUrl}");
-        Session existingSession = null;
-
-        // Close connection/session if exists
-        if (_opcClientsByUrl.TryGetValue(serverUrl, out existingSession))
-        {
-            existingSession.Close();
-            existingSession.Dispose();
-            Console.WriteLine($"Closed existing session for {serverUrl}.");
-        }
-
         // Mark modvalues rows from that server as offline
         await MarkRowsAsOffline(serverUrl);
-
-        //reset cancel token (doesn't mean its live but the cancellation is handled, allows upcoming reconnection attempts to be stopped if needed)
-        _serverCancellationTokens[serverUrl] = new CancellationTokenSource();
     }
 
-    private async Task StartServerActivities(string serverUrl){
+    private async Task StartServerActivities(string serverUrl)
+    {
         try
         {
             var info = _connectionInfo[serverUrl];
-            //var newSession = await SubscribeToOpcServer(serverUrl, info);
             await SubscribeToOpcServer(serverUrl, info, true);
-            
-            // Replace the old session with the new session in the dict
-            //opcClients[serverUrl] = newSession; //redundant
-
             Console.WriteLine($"RECONNECT SUCCESS: Started OPC UA session for {serverUrl}.");
         }
         catch (Exception ex)
@@ -980,7 +956,6 @@ public class OpcSubscribeService : BackgroundService, IOpcSubscribeService
         var deviceNamesFromServer = _connectionInfo[serverUrl].points
                         .Select(item => item.DaqName)
                         .Distinct();
-        //Console.WriteLine($"Devices from server: {string.Join(", ", deviceNamesFromServer)}");
         using (var connection = new NpgsqlConnection(_dbConnectionString))
         {
             await connection.OpenAsync();
@@ -992,6 +967,4 @@ public class OpcSubscribeService : BackgroundService, IOpcSubscribeService
             }
         }
     }
-
-
 }
