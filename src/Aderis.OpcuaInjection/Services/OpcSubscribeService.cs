@@ -36,7 +36,7 @@ public class OpcSubscribeService : BackgroundService, IOpcSubscribeService
     private Dictionary<string, OpcClientSubscribeConfig> _connectionInfo = new();
     private Dictionary<string, Session> _opcClientsByUrl = new();
     private Dictionary<string, System.Timers.Timer> _opcTimeoutTimers = new();
-    private readonly TimeSpan _opcTimeoutPeriod = TimeSpan.FromSeconds(10);
+    private readonly TimeSpan _opcTimeoutPeriod = TimeSpan.FromMinutes(3);
 
     /// <summary>
     /// Represents the online/offline status tag for device
