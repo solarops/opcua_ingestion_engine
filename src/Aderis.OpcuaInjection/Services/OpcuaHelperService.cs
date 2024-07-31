@@ -45,8 +45,24 @@ public class OpcuaHelperService : IOpcHelperService
             .ToListAsync();
         scope.Dispose();
 
+        if (!config.Any())
+        {
+            Console.WriteLine("No client configurations found. Adding default configuration with Ignition server at 62541");
+            var defaultConnection = new OpcClientConnection
+            {
+                ConnectionName = "Ignition",
+                Url = "opc.tcp://10.10.100.1:62541/discovery",
+                MaxSearch = 600,
+                TimeoutMs = 60000,  // Adjusted the property name to match the class definition
+                BrowseExclusionFolders = new List<BrowseExclusionFolder>() //could add "server" and "devices" folders here to exclude by default
+            };
+
+            // Add to the list to return
+            config.Add(defaultConnection);
+        }
         return config;
     }
+    
     public async Task<bool> AddClientConfig(OpcClientConnection connection)
     {
         var scope = _provider.CreateScope();
