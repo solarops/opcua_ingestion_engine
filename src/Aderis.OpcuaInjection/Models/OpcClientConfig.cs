@@ -17,6 +17,12 @@ public class OpcClientConnection
     public string? UserName { get; set; }
     public byte[]? EncryptedPassword { get; set; }
 
+    // Enable configuration when ready
+    // public int TcpDeltaSeconds1 { get; set; }
+    // public int TcpDeltaIterations1 { get; set; }
+    // public int TcpDeltaSeconds2 { get; set; }
+    // public int TcpDeltaIterations2 { get; set; }
+
     public List<string> GetBrowseFolderValues()
     {
         var ret = new List<string>();
