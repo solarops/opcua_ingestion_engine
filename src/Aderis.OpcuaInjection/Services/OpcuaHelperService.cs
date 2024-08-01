@@ -98,7 +98,13 @@ public class OpcuaHelperService : IOpcHelperService
 
         if (connection.EncryptedPassword != null)
         {
-            if (!_opcUserIdentityConfig.UserConfig(out var key, out var iv)) return false;
+            if (!_opcUserIdentityConfig.UserConfig(out var key, out var iv))
+            {
+                Console.WriteLine("Requested Password, but has no encryption keys generated.");
+                Console.Error.WriteLine("Requested Password, but has no encryption keys generated.");
+                return false;
+            }
+
             connection.EncryptedPassword = Encrypt(connection.EncryptedPassword, key, iv);
         }
 
@@ -125,7 +131,11 @@ public class OpcuaHelperService : IOpcHelperService
 
             if (connection.EncryptedPassword != null)
             {
-                if (!_opcUserIdentityConfig.UserConfig(out var key, out var iv)) return false;
+                if (!_opcUserIdentityConfig.UserConfig(out var key, out var iv)) {
+                    Console.WriteLine("Requested Password, but has no encryption keys generated.");
+                    Console.Error.WriteLine("Requested Password, but has no encryption keys generated.");
+                    return false;
+                }
                 existingEntry.EncryptedPassword = Encrypt(connection.EncryptedPassword, key, iv);
             }
 
@@ -208,7 +218,12 @@ public class OpcuaHelperService : IOpcHelperService
     public string DecryptPassword(byte[]? encryptedPassword)
     {
         if (encryptedPassword == null) return "";
-        if (!_opcUserIdentityConfig.UserConfig(out var key, out var iv)) return "";
+        if (!_opcUserIdentityConfig.UserConfig(out var key, out var iv))
+        {
+            Console.WriteLine("Requested Password, but has no decryption keys generated.");
+            Console.Error.WriteLine("Requested Password, but has no decryption keys generated.");
+            return "";
+        }
 
         using (Aes aesAlg = Aes.Create())
         {
