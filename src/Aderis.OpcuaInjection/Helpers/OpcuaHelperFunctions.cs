@@ -152,13 +152,5 @@ public class OpcuaHelperFunctions
         }
     }
 
-    public static void DisposeTimer(object sender)
-    {
-        if (sender is System.Timers.Timer timer)
-        {
-            timer.Stop();
-            timer.Dispose();
-            //Console.WriteLine($"Timer stopped and disposed.");
-        }
-    }
+
 }

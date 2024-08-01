@@ -8,6 +8,7 @@ using Opc.Ua.Client;
 using System.Text.Json.Serialization;
 using Npgsql;
 using System.Data;
+using System.Timers;
 // using ConcurrentCollections;
 
 namespace Aderis.OpcuaInjection.Services;
@@ -31,8 +32,8 @@ public class OpcSubscribeService : BackgroundService, IOpcSubscribeService
     private static Dictionary<string, OpcClientSubscribeConfig> _connectionInfo = new(); 
     private static Dictionary<string, Session> _opcClientsByUrl = new();
 
-    private static Dictionary<string, System.Timers.Timer> _opcTimeoutTimers = new();
-    private static readonly TimeSpan _opcTimeoutPeriod = TimeSpan.FromMinutes(3);  //time period allowed of 0 SubscribedItemChange events before assuming server connection down (1 min works fine too)
+    private Dictionary<string, (System.Timers.Timer timer, ElapsedEventHandler handler)> _opcTimeoutTimers = new();
+    private static readonly TimeSpan _opcTimeoutPeriod = TimeSpan.FromSeconds(30);  //time period allowed of 0 SubscribedItemChange events before assuming server connection down (1 min works fine too)
     private static Dictionary<string, CancellationTokenSource> _serverCancellationTokens = new(); //seperate cancellation tokens for each opc server.
 
 
@@ -400,9 +401,9 @@ public class OpcSubscribeService : BackgroundService, IOpcSubscribeService
         catch (OperationCanceledException ex)
         {
             //dispose all server timers
-            foreach (var timer in _opcTimeoutTimers.Values)
+            foreach (var timerHandlerTuple in _opcTimeoutTimers.Values)
             {
-                OpcuaHelperFunctions.DisposeTimer(timer);
+                DisposeTimer(timerHandlerTuple.timer, timerHandlerTuple.handler);
             }
             _opcTimeoutTimers.Clear();
 
@@ -435,9 +436,9 @@ public class OpcSubscribeService : BackgroundService, IOpcSubscribeService
             Console.WriteLine(ex.StackTrace);
 
             //dispose all server timers
-            foreach (var timer in _opcTimeoutTimers.Values)
+            foreach (var timerHandlerTuple in _opcTimeoutTimers.Values)
             {
-                OpcuaHelperFunctions.DisposeTimer(timer);
+                DisposeTimer(timerHandlerTuple.timer, timerHandlerTuple.handler);
             }
             _opcTimeoutTimers.Clear();
 
@@ -526,6 +527,15 @@ public class OpcSubscribeService : BackgroundService, IOpcSubscribeService
                 break;
         }
     }
+    private static int logCounter = 0;
+    private static void LogTimerStatus(string clientUrl, string action)
+    {
+        logCounter++;
+        if (logCounter % 3000 == 0 ) //increase divisor to decrease message rate while debugging
+        {
+            Console.WriteLine($"[{DateTime.UtcNow:HH:mm:ss.fff}] Timer for {clientUrl} {action}. (Log Counter: {logCounter})");
+        }
+    }
 
     private void SubscribedItemChange(MonitoredItem item, MonitoredItemNotificationEventArgs e)
     {
@@ -535,16 +545,7 @@ public class OpcSubscribeService : BackgroundService, IOpcSubscribeService
         string clientUrl = opcItem.ClientUrl;
 
         // Reset the corresponding timer each time new data is received
-        if (_opcTimeoutTimers.ContainsKey(clientUrl))
-        {
-            _opcTimeoutTimers[clientUrl].Stop();
-            _opcTimeoutTimers[clientUrl].Start();
-            //LogTimerStatus(clientUrl, "reset");
-        }
-        else
-        {
-            //LogTimerStatus(clientUrl, "not found");
-        }
+        ResetTimer(clientUrl);
 
 
         var subscription = (OPCSubscription)item.Subscription;
@@ -816,10 +817,11 @@ public class OpcSubscribeService : BackgroundService, IOpcSubscribeService
             subscription.ApplyChanges();
 
             //initialize/start an opc timer right before subscriptions for that server start
-            var timer = InitializeOpcTimeoutTimer(serverUrl);
-            Console.WriteLine($"Timer for {serverUrl} started.");
-            _opcTimeoutTimers[serverUrl] = timer;
 
+
+            _opcTimeoutTimers[serverUrl] = InitializeOpcTimeoutTimer(serverUrl);
+            Console.WriteLine($"Timer for {serverUrl} just initialized.");
+            //DisposeTimer(_opcTimeoutTimers[serverUrl].timer, _opcTimeoutTimers[serverUrl].handler);
             return session;
         }
         catch (Exception ex)
@@ -833,14 +835,55 @@ public class OpcSubscribeService : BackgroundService, IOpcSubscribeService
 //-----------------OPC UA SERVER RECONNECT CODE BELOW-----------------
 
 
-    public System.Timers.Timer InitializeOpcTimeoutTimer(string serverUrl)
+    public (System.Timers.Timer, ElapsedEventHandler) InitializeOpcTimeoutTimer(string serverUrl)
     {
         Console.WriteLine($"Initializing OPC UA server timeout timer for {serverUrl}...");
+        if (_opcTimeoutTimers.TryGetValue(serverUrl, out var existing))
+        {
+            DisposeTimer(existing.timer, existing.handler);
+        }
+
         var timer = new System.Timers.Timer(_opcTimeoutPeriod.TotalMilliseconds);
-        timer.Elapsed += (sender, e) => OnOpcTimeout(sender, e, serverUrl);
+        ElapsedEventHandler handler = (sender, e) => OnOpcTimeout(sender, e, serverUrl);
+        timer.Elapsed += handler;
         timer.AutoReset = false; // Once elapsed, do not restart
         timer.Start();
-        return timer;
+        
+        _opcTimeoutTimers[serverUrl] = (timer, handler); // Store the timer and the handler together
+        return (timer,handler);
+    }
+
+    public void DisposeTimer(System.Timers.Timer timer, ElapsedEventHandler handler)
+    {
+        if (timer != null)
+        {
+            timer.Elapsed -= handler; // Detach the exact event handler
+            timer.Stop();
+            timer.Dispose();
+            Console.WriteLine("Timer disposed.");
+        }
+    }
+
+    public void ResetTimer(string clientUrl)
+    {
+        if (_opcTimeoutTimers.TryGetValue(clientUrl, out var tuple))
+        {
+            var (timer, handler) = tuple;
+            try
+            {
+                timer.Stop();
+                timer.Start();
+                LogTimerStatus(clientUrl, "reset");
+            }
+            catch (ObjectDisposedException)
+            {
+                LogTimerStatus(clientUrl, "timer was already disposed");
+            }
+        }
+        else
+        {
+            LogTimerStatus(clientUrl, "not found");
+        }
     }
 
     private bool AreAllServersDown()
@@ -853,7 +896,7 @@ public class OpcSubscribeService : BackgroundService, IOpcSubscribeService
         Console.WriteLine($"TIMER ELAPSED / OnOpcTimeout called for {serverUrl}.");
 
         // Dispose of the timer that just elapsed
-        OpcuaHelperFunctions.DisposeTimer(sender);
+        DisposeTimer(_opcTimeoutTimers[serverUrl].timer, _opcTimeoutTimers[serverUrl].handler);
         _opcTimeoutTimers.Remove(serverUrl);
 
         //step 1 - flag server as down
