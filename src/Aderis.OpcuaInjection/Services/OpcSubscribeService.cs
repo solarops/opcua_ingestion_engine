@@ -169,12 +169,7 @@ public class OpcSubscribeService : BackgroundService, IOpcSubscribeService
 
             foreach (var opcClientConnection in opcClientConnections)
             {
-                var userIdentity = new UserIdentity(new AnonymousIdentityToken());
-
-                if (!string.IsNullOrEmpty(opcClientConnection.UserName))
-                {
-                    userIdentity = new UserIdentity(opcClientConnection.UserName.Trim(), _opcHelperService.DecryptPassword(opcClientConnection.EncryptedPassword).Trim());
-                }
+                var userIdentity = _opcHelperService.GetUserIdentity(opcClientConnection);
 
                 _connectionInfo.Add(opcClientConnection.Url, new OpcClientSubscribeConfig()
                 {

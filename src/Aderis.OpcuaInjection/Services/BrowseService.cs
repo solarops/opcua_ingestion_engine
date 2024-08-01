@@ -26,9 +26,7 @@ public class BrowseService : IBrowseService
     {
         var clientConnection = await _opcHelperService.LoadClientConfigByName(connectionId);
 
-        var userIdentity = string.IsNullOrEmpty(clientConnection.UserName)
-            ? new UserIdentity(new AnonymousIdentityToken())
-            : new UserIdentity(clientConnection.UserName, _opcHelperService.DecryptPassword(clientConnection.EncryptedPassword));
+        var userIdentity = _opcHelperService.GetUserIdentity(clientConnection);
 
         OpcuaBrowse opcuaBrowse = new(cts, clientConnection, userIdentity);
 
