@@ -561,8 +561,7 @@ public class OpcSubscribeService : BackgroundService, IOpcSubscribeService
 
                             ModifyMeasure(connection, config.MeasureName, opcItem.DaqName, scaledValue, timestamp);
 
-                            // Got a new Measure, need to set myPV_online
-                            ModifyMeasure(connection, myPVOnlineTag.MeasureName, opcItem.DaqName, 1.0, timestamp);
+                            if (config.MeasureName != myPVOnlineTag.MeasureName) ModifyMeasure(connection, myPVOnlineTag.MeasureName, opcItem.DaqName, 1.0, timestamp);
                         }
                         else
                         {
