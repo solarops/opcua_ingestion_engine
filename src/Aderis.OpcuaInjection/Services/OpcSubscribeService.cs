@@ -208,6 +208,8 @@ public class OpcSubscribeService : BackgroundService, IOpcSubscribeService
                                 {
                                     CheckAndAddMeasure(connection, deviceType, device, point);
 
+                                    if (point.MeasureName == myPVOnlineTag.MeasureName) continue;
+
                                     // Define the data change filter
                                     var dataChangeFilter = new DataChangeFilter
                                     {
@@ -215,6 +217,7 @@ public class OpcSubscribeService : BackgroundService, IOpcSubscribeService
                                         DeadbandType = (uint)DeadbandType.None
                                     };
                                     string url = connectionUrls[device.Network.Params.Server];
+                                    
                                     //construct monitored OPC item based on template in site devices
                                     OPCMonitoredItem oPCMonitoredItem = new()
                                     {
@@ -313,6 +316,8 @@ public class OpcSubscribeService : BackgroundService, IOpcSubscribeService
                                 }
                             }
                         }
+
+                        Console.WriteLine($"Devices to Lock: {devicesToLock}");
 
                         if (devicesToLock.Count > 0)
                         {
@@ -540,7 +545,10 @@ public class OpcSubscribeService : BackgroundService, IOpcSubscribeService
                 */
 
                 string timestamp = DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ss.ffffff");
-                if (Math.Abs((DateTime.UtcNow - value.SourceTimestamp).TotalMilliseconds) <= subscription.TimeoutMs)
+                string measureName = config.MeasureName;
+                // disallow "myPV_online" measured
+                if (measureName != myPVOnlineTag.MeasureName &&
+                    Math.Abs((DateTime.UtcNow - value.SourceTimestamp).TotalMilliseconds) <= subscription.TimeoutMs)
                 {
                     try
                     {
@@ -561,7 +569,7 @@ public class OpcSubscribeService : BackgroundService, IOpcSubscribeService
 
                             ModifyMeasure(connection, config.MeasureName, opcItem.DaqName, scaledValue, timestamp);
 
-                            if (config.MeasureName != myPVOnlineTag.MeasureName) ModifyMeasure(connection, myPVOnlineTag.MeasureName, opcItem.DaqName, 1.0, timestamp);
+                            ModifyMeasure(connection, myPVOnlineTag.MeasureName, opcItem.DaqName, 1.0, timestamp);
                         }
                         else
                         {
@@ -749,6 +757,8 @@ public class OpcSubscribeService : BackgroundService, IOpcSubscribeService
         {
             foreach (var oldPoint in config.points)
             {
+                if (oldPoint.Config.MeasureName == myPVOnlineTag.MeasureName) continue;
+
                 OPCMonitoredItem oPCMonitoredItem = new OPCMonitoredItem()
                 {
                     DaqName = oldPoint.DaqName,
@@ -765,8 +775,6 @@ public class OpcSubscribeService : BackgroundService, IOpcSubscribeService
                 };
                 oPCMonitoredItem.Notification += SubscribedItemChange;
                 points.Add(oPCMonitoredItem);
-                //here we could update connectionInfo[serverUrl].points to be current,
-                // but at this stage in code (after startup) its only used to provide the monitor item point info when reinit them on resub
             }
         }
         else
