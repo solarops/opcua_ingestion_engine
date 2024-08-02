@@ -10,6 +10,8 @@ using Npgsql;
 using System.Data;
 using System.Timers;
 using System.Net.Sockets;
+using System.Collections.Concurrent;
+
 
 namespace Aderis.OpcuaInjection.Services;
 
@@ -36,7 +38,10 @@ public class OpcSubscribeService : BackgroundService, IOpcSubscribeService
     private Dictionary<string, OpcClientSubscribeConfig> _connectionInfo = new();
     private Dictionary<string, Session> _opcClientsByUrl = new();
     private Dictionary<string, System.Timers.Timer> _opcTimeoutTimers = new();
-    private readonly TimeSpan _opcTimeoutPeriod = TimeSpan.FromMinutes(3);
+    private ConcurrentDictionary<string, bool> _statusByUrl = new();
+    //private readonly TimeSpan _opcTimeoutPeriod = TimeSpan.FromMinutes(3);
+    private readonly TimeSpan _opcTimeoutPeriod = TimeSpan.FromSeconds(50);
+
 
     /// <summary>
     /// Represents the online/offline status tag for device
@@ -289,9 +294,13 @@ public class OpcSubscribeService : BackgroundService, IOpcSubscribeService
             int i = 0;
             while (true)
             {
+                if(i%3 == 0){ //every 15s
+                    UpdateServerTimers();
+                }
                 // Every 12th iteration of 5s (60s)
                 if (i == 12)
                 {
+
                     using (var connection = new NpgsqlConnection(_dbConnectionString))
                     {
                         connection.Open();
@@ -508,6 +517,25 @@ public class OpcSubscribeService : BackgroundService, IOpcSubscribeService
                 break;
         }
     }
+    private static int logCounter = 0;
+    private static void LogStatusUpdate(string clientUrl, string action)
+    {
+        logCounter++;
+        if (logCounter % 4000 == 0 ) //increase divisor to decrease message rate while debugging
+        {
+            Console.WriteLine($"[{DateTime.UtcNow:HH:mm:ss.fff}] Updating status for {clientUrl} {action}. (Log Counter: {logCounter})");
+        }
+    }
+    private static int logCounter2 = 0;
+    private static void LogTimerStatus(string clientUrl, string action)
+    {
+        logCounter2++;
+        if (logCounter % 1 == 0 ) //increase divisor to decrease message rate while debugging
+        {
+            Console.WriteLine($"[{DateTime.UtcNow:HH:mm:ss.fff}] RESETTING Timer for {clientUrl} {action}. (Log Counter: {logCounter2})");
+        }
+    }
+
 
     private void SubscribedItemChange(MonitoredItem item, MonitoredItemNotificationEventArgs e)
     {
@@ -519,8 +547,12 @@ public class OpcSubscribeService : BackgroundService, IOpcSubscribeService
         // Reset the corresponding timer each time new data is received
         if (_opcTimeoutTimers.ContainsKey(clientUrl))
         {
-            _opcTimeoutTimers[clientUrl].Stop();
-            _opcTimeoutTimers[clientUrl].Start();
+            _statusByUrl.TryUpdate(clientUrl, true, false); //set to true only if its currently false
+            LogStatusUpdate(clientUrl, "Reset");
+        }
+        else
+        {
+            LogStatusUpdate(clientUrl, "statusByUrl entry not found to update");
         }
 
         var subscription = (OPCSubscription)item.Subscription;
@@ -786,6 +818,8 @@ public class OpcSubscribeService : BackgroundService, IOpcSubscribeService
         subscription.AddItems(points); //subscribe to each data stream of each device obtained from site_devices.json
         subscription.ApplyChanges();
 
+        this._statusByUrl[serverUrl] = false; //assume server is offline until get updates, init here so works on start and restart
+        
         //initialize/start an opc timer right before subscriptions for that server start
         var timer = InitializeOpcTimeoutTimer(serverUrl);
         Console.WriteLine($"Timeout timer for {serverUrl} started.");
@@ -804,6 +838,23 @@ public class OpcSubscribeService : BackgroundService, IOpcSubscribeService
         timer.AutoReset = false; // Once elapsed, do not restart
         timer.Start();
         return timer;
+    }
+
+    public void UpdateServerTimers()
+    {
+        foreach (var kvp in _statusByUrl) // Iterate through all (serverUrl, status) pairs
+        {
+            if (kvp.Value) // Check if the status is true
+            {
+                if (_opcTimeoutTimers.ContainsKey(kvp.Key))
+                {
+                    _opcTimeoutTimers[kvp.Key].Stop();
+                    _opcTimeoutTimers[kvp.Key].Start();
+                    LogTimerStatus(kvp.Key, "Reset from main loop");
+                }
+                _statusByUrl[kvp.Key] = false; // Reset status
+            }
+        }
     }
 
     private async void OnOpcTimeout(object sender, ElapsedEventArgs e, string serverUrl)
@@ -840,7 +891,7 @@ public class OpcSubscribeService : BackgroundService, IOpcSubscribeService
         {
             timer.Stop();
             timer.Dispose();
-            //Console.WriteLine($"Timer stopped and disposed.");
+            Console.WriteLine($"Timer stopped and disposed.");
         }
     }
     private async Task MonitorAndRestartServer(string serverUrl)
