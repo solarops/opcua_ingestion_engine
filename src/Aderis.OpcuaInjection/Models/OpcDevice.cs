@@ -14,6 +14,8 @@ public class JSONGenericDevice
     public required NetworkObject Network { get; set; }
     [JsonPropertyName("device_type")]
     public required string DeviceType { get; set; }
+    [JsonPropertyName("monitored")]
+    public required bool Monitored { get; set; }
 }
 
 public class NetworkObject

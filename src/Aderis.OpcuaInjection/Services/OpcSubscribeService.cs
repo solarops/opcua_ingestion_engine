@@ -190,7 +190,7 @@ public class OpcSubscribeService : BackgroundService, IOpcSubscribeService
                 {
                     foreach (JSONGenericDevice device in deviceList)
                     {
-                        if (device.Network.Params.Protocol == "OPCUA")
+                        if (device.Monitored && device.Network.Params.Protocol == "OPCUA")
                         {
                             try
                             {
