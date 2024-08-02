@@ -317,8 +317,6 @@ public class OpcSubscribeService : BackgroundService, IOpcSubscribeService
                             }
                         }
 
-                        Console.WriteLine($"Devices to Lock: {devicesToLock}");
-
                         if (devicesToLock.Count > 0)
                         {
                             string currentUtcTime = DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ss.ffffff");
@@ -567,7 +565,7 @@ public class OpcSubscribeService : BackgroundService, IOpcSubscribeService
                                     break;
                             }
 
-                            ModifyMeasure(connection, config.MeasureName, opcItem.DaqName, scaledValue, timestamp);
+                            ModifyMeasure(connection, measureName, opcItem.DaqName, scaledValue, timestamp);
 
                             ModifyMeasure(connection, myPVOnlineTag.MeasureName, opcItem.DaqName, 1.0, timestamp);
                         }
