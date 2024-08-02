@@ -39,8 +39,7 @@ public class OpcSubscribeService : BackgroundService, IOpcSubscribeService
     private Dictionary<string, Session> _opcClientsByUrl = new();
     private Dictionary<string, System.Timers.Timer> _opcTimeoutTimers = new();
     private ConcurrentDictionary<string, bool> _statusByUrl = new();
-    //private readonly TimeSpan _opcTimeoutPeriod = TimeSpan.FromMinutes(3);
-    private readonly TimeSpan _opcTimeoutPeriod = TimeSpan.FromSeconds(50);
+    private readonly TimeSpan _opcTimeoutPeriod = TimeSpan.FromMinutes(3);
 
 
     /// <summary>
@@ -517,24 +516,7 @@ public class OpcSubscribeService : BackgroundService, IOpcSubscribeService
                 break;
         }
     }
-    private static int logCounter = 0;
-    private static void LogStatusUpdate(string clientUrl, string action)
-    {
-        logCounter++;
-        if (logCounter % 4000 == 0 ) //increase divisor to decrease message rate while debugging
-        {
-            Console.WriteLine($"[{DateTime.UtcNow:HH:mm:ss.fff}] Updating status for {clientUrl} {action}. (Log Counter: {logCounter})");
-        }
-    }
-    private static int logCounter2 = 0;
-    private static void LogTimerStatus(string clientUrl, string action)
-    {
-        logCounter2++;
-        if (logCounter % 1 == 0 ) //increase divisor to decrease message rate while debugging
-        {
-            Console.WriteLine($"[{DateTime.UtcNow:HH:mm:ss.fff}] RESETTING Timer for {clientUrl} {action}. (Log Counter: {logCounter2})");
-        }
-    }
+
 
 
     private void SubscribedItemChange(MonitoredItem item, MonitoredItemNotificationEventArgs e)
@@ -548,11 +530,6 @@ public class OpcSubscribeService : BackgroundService, IOpcSubscribeService
         if (_opcTimeoutTimers.ContainsKey(clientUrl))
         {
             _statusByUrl.TryUpdate(clientUrl, true, false); //set to true only if its currently false
-            LogStatusUpdate(clientUrl, "Reset");
-        }
-        else
-        {
-            LogStatusUpdate(clientUrl, "statusByUrl entry not found to update");
         }
 
         var subscription = (OPCSubscription)item.Subscription;
@@ -850,7 +827,6 @@ public class OpcSubscribeService : BackgroundService, IOpcSubscribeService
                 {
                     _opcTimeoutTimers[kvp.Key].Stop();
                     _opcTimeoutTimers[kvp.Key].Start();
-                    LogTimerStatus(kvp.Key, "Reset from main loop");
                 }
                 _statusByUrl[kvp.Key] = false; // Reset status
             }
