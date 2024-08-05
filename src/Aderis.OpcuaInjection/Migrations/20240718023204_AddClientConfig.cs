@@ -126,7 +126,7 @@ namespace Aderis.OpcuaInjection.Migrations
                     }
 
                     // Remove
-                    // File.Delete(filePath);
+                    File.Delete(filePath);
                 }
                 catch (Exception ex)
                 {
