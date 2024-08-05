@@ -14,6 +14,8 @@ public class JSONGenericDevice
     public required NetworkObject Network { get; set; }
     [JsonPropertyName("device_type")]
     public required string DeviceType { get; set; }
+    [JsonPropertyName("monitored")]
+    public required bool Monitored { get; set; }
 }
 
 public class NetworkObject
@@ -53,6 +55,8 @@ public class OPCMonitoredItem : MonitoredItem
 
     // Includes Unit, TagName, MeasureName, ScaleMode
     public required OpcTemplatePointConfiguration Config { get; set; }
+
+    public required string ClientUrl { get; set; }
 }
 
 public class OPCSubscription : Subscription

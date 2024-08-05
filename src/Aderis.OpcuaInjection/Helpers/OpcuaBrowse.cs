@@ -13,10 +13,10 @@ public class OpcuaBrowse
     private static readonly string SosNodesPrefix = "/opt/sos-config/opcua_nodes";
     
     // Connection Specific
-    private OpcClientConnection opcClientConnection;
+    private OpcClientConnection _opcClientConnection;
     private CustomThreadPool customThreadPool;
-    private string _connectionId;
     private CancellationToken _globalCancel;
+    private UserIdentity _userIdentity;
     private void DFS_Threaded(Session session, ReferenceDescription rd, JsTreeNode currNode, List<string> exclusionFolders, int searchDepth)
     {
         // Global Cancel, begin scaffold return 
@@ -117,11 +117,16 @@ public class OpcuaBrowse
         catch (Exception ex)
         {
             Console.WriteLine("!!!!!!!!!!!!!!!!!!!!!!");
+            Console.Error.WriteLine("!!!!!!!!!!!!!!!!!!!!!!");
             // Handle exceptions and print the error
 
             Console.WriteLine($"Error: {ex.Message}");
+            Console.Error.WriteLine($"Error: {ex.Message}");
             Console.WriteLine(ex.StackTrace);
+            Console.Error.WriteLine(ex.StackTrace);
             Console.WriteLine(rd.ToString());
+            Console.Error.WriteLine(rd.ToString());
+
 
             if (ex is ServiceResultException sre)
             {
@@ -130,6 +135,7 @@ public class OpcuaBrowse
             }
 
             Console.WriteLine("#########################");
+            Console.Error.WriteLine("#########################");
 
             return;
         }
@@ -137,26 +143,33 @@ public class OpcuaBrowse
         return;
     }
 
-    public OpcuaBrowse(CancellationToken GlobalCancel, string connectionId)
+    public OpcuaBrowse(CancellationToken GlobalCancel, OpcClientConnection opcClientConnection, UserIdentity userIdentity)
     {
-        _connectionId = connectionId;
         _globalCancel = GlobalCancel;
-        // BEGIN: Can move this to private setter? (For encapsulation)
-        OpcClientConfig clientConfig = OpcuaHelperFunctions.LoadClientConfig();
-        opcClientConnection = clientConfig.Connections.Find(x => x.ConnectionName == _connectionId) ?? throw new Exception($"Connection with ID '{_connectionId}' not found.");
-        // END
+        _opcClientConnection = opcClientConnection;
+        _userIdentity = userIdentity;
 
-        customThreadPool = new CustomThreadPool(new object(), opcClientConnection.MaxSearch);
+        customThreadPool = new CustomThreadPool(new object(), _opcClientConnection.MaxSearch);
     }
     public async Task<bool> StartBrowse()
     {
-        string tempFilePath = $"{SosNodesPrefix}/temp_{_connectionId}.json";
+        string filePath = $"{SosNodesPrefix}/{_opcClientConnection.ConnectionName}.json";
+        if (File.Exists(filePath))
+        {
+            File.Delete(filePath);
+        }
+
+        string tempFilePath = $"{SosNodesPrefix}/temp_{_opcClientConnection.ConnectionName}.json";
+        string errorFilePath = $"{SosNodesPrefix}/errors_{_opcClientConnection.ConnectionName}.json";
+        if (File.Exists(errorFilePath)) {
+            File.Delete(errorFilePath);
+        }
         
         // consider instead exceptions here..
         if (File.Exists(tempFilePath))
         {
-            Console.WriteLine($"Browse job for {_connectionId} already exists..");
-            throw new Exception($"Browse job for {_connectionId} already exists..");
+            Console.WriteLine($"Browse job for {_opcClientConnection.ConnectionName} already exists..");
+            throw new Exception($"Browse job for {_opcClientConnection.ConnectionName} already exists..");
         }
 
         string directoryPath = Path.GetDirectoryName(tempFilePath) ?? throw new Exception("filePath is null.");
@@ -168,8 +181,8 @@ public class OpcuaBrowse
 
         File.WriteAllText(tempFilePath, "");
 
-        // Get Fresh session
-        Session session = await OpcuaHelperFunctions.GetSessionByUrl(opcClientConnection.Url);
+        // Get Fresh session              
+        Session session = await OpcuaHelperFunctions.GetSessionByUrl(_opcClientConnection.Url, _userIdentity);
 
         JsTreeExport jsTreeExport = new();
 
@@ -200,7 +213,7 @@ public class OpcuaBrowse
         {
             string folderText = rd.DisplayName.Text;
 
-            if (opcClientConnection.BrowseExclusionFolders.Contains(folderText))
+            if (_opcClientConnection.GetBrowseFolderValues().Contains(folderText))
             {
                 // under the child nodes of the current node. If one of its children's title is in exclusionFolders, then skip that leaf of the tree. 
                 // Continue to next child.
@@ -223,11 +236,11 @@ public class OpcuaBrowse
             // rd and jsTreeNode are references to the same Node
             try
             {
-                childThreads.Add(customThreadPool.AskForThread(() => DFS_Threaded(session, rd, jsTreeNode, opcClientConnection.BrowseExclusionFolders, 1)));
+                childThreads.Add(customThreadPool.AskForThread(() => DFS_Threaded(session, rd, jsTreeNode, _opcClientConnection.GetBrowseFolderValues(), 1)));
             }
             catch
             {
-                DFS_Threaded(session, rd, jsTreeNode, opcClientConnection.BrowseExclusionFolders, 1);
+                DFS_Threaded(session, rd, jsTreeNode, _opcClientConnection.GetBrowseFolderValues(), 1);
             }
 
         }
@@ -247,8 +260,6 @@ public class OpcuaBrowse
         });
 
         File.Delete(tempFilePath);
-
-        string filePath = $"{SosNodesPrefix}/{_connectionId}.json";
 
         File.WriteAllText(filePath, json);
         stopwatch.Stop();
