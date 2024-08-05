@@ -62,6 +62,7 @@ namespace Aderis.OpcuaInjection.Migrations
                 {
                     Id = table.Column<int>(type: "integer", nullable: false)
                         .Annotation("Npgsql:ValueGenerationStrategy", NpgsqlValueGenerationStrategy.IdentityByDefaultColumn),
+                    ConnectionOpcClientConnectionId = table.Column<int>(type: "integer", nullable: false),
                     OpcClientConnectionId = table.Column<int>(type: "integer", nullable: false),
                     ExclusionFolder = table.Column<string>(type: "text", nullable: false)
                 },
