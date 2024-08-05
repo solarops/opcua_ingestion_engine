@@ -157,7 +157,7 @@ public class OpcuaHelperService : IOpcHelperService
                 var newItem = new BrowseExclusionFolder()
                 {
                     ExclusionFolder = sharedItem.ExclusionFolder,
-                    ConnectionOpcClientConnectionId = existingEntry.Id,
+                    OpcClientConnectionId = existingEntry.Id,
                     OpcClientConnection = existingEntry
                 };
                 existingEntry.BrowseExclusionFolders.Add(newItem);
