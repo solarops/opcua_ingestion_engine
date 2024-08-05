@@ -40,7 +40,7 @@ public class BrowseExclusionFolder
 {
     [Key]
     public int Id { get; set; }
-    public required int ConnectionOpcClientConnectionId { get; set; }
+    public required int OpcClientConnectionId { get; set; }
     public required OpcClientConnection OpcClientConnection { get; set; }
     public required string ExclusionFolder { get; set; }
 }
