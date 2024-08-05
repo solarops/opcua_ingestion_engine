@@ -117,10 +117,14 @@ namespace Aderis.OpcuaInjection.Migrations
                         {
                             migrationBuilder.InsertData(
                             table: "BrowseExclusionFolders",
-                            columns: new[] { "ExclusionFolder", "OpcClientConnectionId" },
+                            columns: new[] {
+                                "ExclusionFolder",
+                                "ConnectionOpcClientConnectionId",
+                                "OpcClientConnectionId"
+                            },
                             values: new object[,]
                             {
-                                { folder, pgFirstId }
+                                { folder, pgFirstId, pgFirstId }
                             });
                         }
                         pgFirstId += 1;
