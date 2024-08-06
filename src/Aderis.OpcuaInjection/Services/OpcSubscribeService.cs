@@ -556,7 +556,9 @@ public class OpcSubscribeService : BackgroundService, IOpcSubscribeService
                 string measureName = config.MeasureName;
                 // disallow "myPV_online" measured
                 if (measureName != myPVOnlineTag.MeasureName &&
-                    Math.Abs((DateTime.UtcNow - value.SourceTimestamp).TotalMilliseconds) <= subscription.TimeoutMs)
+                        (opcItem.IgnoreTimestamp ||
+                        Math.Abs((DateTime.UtcNow - value.SourceTimestamp).TotalMilliseconds) <= subscription.TimeoutMs)
+                    )
                 {
                     try
                     {
@@ -767,10 +769,11 @@ public class OpcSubscribeService : BackgroundService, IOpcSubscribeService
             {
                 if (oldPoint.Config.MeasureName == myPVOnlineTag.MeasureName) continue;
 
-                OPCMonitoredItem oPCMonitoredItem = new OPCMonitoredItem()
+                OPCMonitoredItem oPCMonitoredItem = new()
                 {
                     DaqName = oldPoint.DaqName,
                     Config = oldPoint.Config,
+                    IgnoreTimestamp = oldPoint.IgnoreTimestamp,
                     ClientUrl = oldPoint.ClientUrl,
                     StartNodeId = oldPoint.StartNodeId,
                     AttributeId = oldPoint.AttributeId,

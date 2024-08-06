@@ -52,10 +52,9 @@ public class OPCDevicePoint
 public class OPCMonitoredItem : MonitoredItem
 {
     public string DaqName { get; set; } = "";
-
+    public bool IgnoreTimestamp { get; set; } = false;
     // Includes Unit, TagName, MeasureName, ScaleMode
     public required OpcTemplatePointConfiguration Config { get; set; }
-
     public required string ClientUrl { get; set; }
 }
 
