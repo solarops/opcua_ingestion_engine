@@ -96,7 +96,7 @@ public class OpcuaHelperService : IOpcHelperService
 
         if (existingEntry != null) return false;
 
-        if (connection.EncryptedPassword != null)
+        if (connection.EncryptedPassword != null && connection.EncryptedPassword.Length > 0)
         {
             if (!_opcUserIdentityConfig.UserConfig(out var key, out var iv))
             {
@@ -129,7 +129,7 @@ public class OpcuaHelperService : IOpcHelperService
 
             _mapper.Map(connection, existingEntry);
 
-            if (connection.EncryptedPassword != null)
+            if (connection.EncryptedPassword != null && connection.EncryptedPassword.Length > 0)
             {
                 if (!_opcUserIdentityConfig.UserConfig(out var key, out var iv)) {
                     Console.WriteLine("Requested Password, but has no encryption keys generated.");
