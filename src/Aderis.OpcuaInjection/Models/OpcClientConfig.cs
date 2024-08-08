@@ -24,7 +24,7 @@ public class OpcClientConnection
     // public int TcpDeltaIterations2 { get; set; }
 
     // Disregard timestamp check on 1st update, useful if process reboots after a prolonged outage and values are "stuck"
-    public bool AutoAcceptFirstUpdate { get; set; } = false;
+    public bool AutoAcceptFirstUpdate { get; set; } = true;
 
     public List<string> GetBrowseFolderValues()
     {

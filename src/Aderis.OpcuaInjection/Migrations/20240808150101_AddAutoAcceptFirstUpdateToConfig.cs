@@ -15,7 +15,7 @@ namespace Aderis.OpcuaInjection.Migrations
                 table: "OpcClientConnections",
                 type: "boolean",
                 nullable: false,
-                defaultValue: false);
+                defaultValue: true);
         }
 
         /// <inheritdoc />
