@@ -61,7 +61,7 @@ public class OpcuaHelperService : IOpcHelperService
         _opcUserIdentityConfig = new("OPCUA_PW_ENCRYPTION_KEY", "OPCUA_IV");
     }
 
-    public async Task<List<OpcClientConnection>> LoadClientConfig()
+    public async Task<List<OpcClientConnection>> LoadClientConfig(bool returnDefault=true)
     {
         var scope = _provider.CreateScope();
         var _context = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
@@ -70,7 +70,7 @@ public class OpcuaHelperService : IOpcHelperService
             .ToListAsync();
         scope.Dispose();
 
-        if (!config.Any())
+        if (returnDefault && !config.Any())
         {
             Console.WriteLine("No client configurations found. Adding default configuration with Ignition server at 62541");
             var defaultConnection = new OpcClientConnection

@@ -70,7 +70,7 @@ public class ClientController : BaseApiController
     [HttpGet("config/get")]
     public async Task<ActionResult<List<OpcClientConnectionDto>>> GetConnectionsAsync()
     {
-        var opcClientConnections = await _opcHelperService.LoadClientConfig();
+        var opcClientConnections = await _opcHelperService.LoadClientConfig(false);
         var ret = new List<OpcClientConnectionDto>();
 
         foreach ( var connection in opcClientConnections )
