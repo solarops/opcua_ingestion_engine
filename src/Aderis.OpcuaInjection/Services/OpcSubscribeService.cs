@@ -35,7 +35,7 @@ public class OpcSubscribeService : BackgroundService, IOpcSubscribeService
     private Dictionary<string, List<JSONGenericDevice>> _siteDevices;
     private string _dbConnectionString;
     private readonly IHostEnvironment _env;
-    private Dictionary<string, OpcClientSubscribeConfig> _connectionInfo = new();
+    private Dictionary<string, OpcClientPointsConfig> _connectionInfo = new();
     private Dictionary<string, Session> _opcClientsByUrl = new();
     private Dictionary<string, System.Timers.Timer> _opcTimeoutTimers = new();
     private ConcurrentDictionary<string, bool> _statusByUrl = new();
@@ -97,16 +97,21 @@ public class OpcSubscribeService : BackgroundService, IOpcSubscribeService
         await OpcuaSubscribeStart();
     }
 
-    private class OpcClientSubscribeConfig
+    private class OpcClientPointsConfig
     {
         public required UserIdentity UserIdentity { get; set; }
         public required int TimeoutMs { get; set; }
         public required List<OPCMonitoredItem> points { get; set; }
     }
 
+    private class OpcClientSubscribeConfig
+    {
+        public required string Url { get; set; }
+        public required bool IgnoreTimestamp { get; set; }
+    }
+
     private async Task OpcuaSubscribeStart()
     {
-        //Dictionary<string, OpcClientSubscribeConfig> connectionInfo = new(); // made class scoped
         var _opcDevices = new List<string>();
 
         // Get contents of the following: sos_templates_opcua, site_devices, plant_config (for db connection string), opcua_client_config.json
@@ -168,7 +173,7 @@ public class OpcSubscribeService : BackgroundService, IOpcSubscribeService
                 }
             }
 
-            Dictionary<string, string> connectionUrls = new();
+            Dictionary<string, OpcClientSubscribeConfig> connectionConfig = new();
             var opcClientConnections = await _opcHelperService.LoadClientConfig();
 
             _connectionInfo = new();
@@ -176,14 +181,17 @@ public class OpcSubscribeService : BackgroundService, IOpcSubscribeService
             {
                 var userIdentity = _opcHelperService.GetUserIdentity(opcClientConnection);
 
-                _connectionInfo.Add(opcClientConnection.Url, new OpcClientSubscribeConfig()
+                _connectionInfo.Add(opcClientConnection.Url, new OpcClientPointsConfig()
                 {
                     UserIdentity = userIdentity,
                     TimeoutMs = opcClientConnection.TimeoutMs,
                     points = []
                 });
 
-                connectionUrls.Add(opcClientConnection.ConnectionName, opcClientConnection.Url);
+                connectionConfig.Add(
+                    opcClientConnection.ConnectionName,
+                    new OpcClientSubscribeConfig()
+                    { Url = opcClientConnection.Url, IgnoreTimestamp = opcClientConnection.AutoAcceptFirstUpdate });
             }
 
             using (var connection = new NpgsqlConnection(_dbConnectionString))
@@ -221,14 +229,16 @@ public class OpcSubscribeService : BackgroundService, IOpcSubscribeService
                                         Trigger = DataChangeTrigger.StatusValueTimestamp,
                                         DeadbandType = (uint)DeadbandType.None
                                     };
-                                    string url = connectionUrls[device.Network.Params.Server];
-                                    
+
+                                    string url = connectionConfig[device.Network.Params.Server].Url;
+
                                     //construct monitored OPC item based on template in site devices
                                     OPCMonitoredItem oPCMonitoredItem = new()
                                     {
                                         DaqName = device.DaqName,
                                         Config = point,
                                         ClientUrl = url,
+                                        IgnoreTimestamp = connectionConfig[device.Network.Params.Server].IgnoreTimestamp,
                                         StartNodeId = $"{device.Network.Params.PointNodeId}/{device.Network.Params.Prefix}{point.TagName}",
                                         AttributeId = Attributes.Value,
                                         DisplayName = point.TagName,
@@ -266,7 +276,7 @@ public class OpcSubscribeService : BackgroundService, IOpcSubscribeService
 
 
         //List<Session> opcClients = new(); // made class scoped dict opcClientsByUrl
-        foreach ((string serverUrl, OpcClientSubscribeConfig info) in _connectionInfo)
+        foreach ((string serverUrl, OpcClientPointsConfig info) in _connectionInfo)
         {
             try
             {
@@ -293,7 +303,8 @@ public class OpcSubscribeService : BackgroundService, IOpcSubscribeService
             int i = 0;
             while (true)
             {
-                if(i%3 == 0){ //every 15s
+                if (i % 3 == 0)
+                { //every 15s
                     UpdateServerTimers();
                 }
                 // Every 12th iteration of 5s (60s)
@@ -552,6 +563,8 @@ public class OpcSubscribeService : BackgroundService, IOpcSubscribeService
                 if (Math.Abs((DateTime.UtcNow - value.SourceTimestamp).TotalMilliseconds) <= subscription.TimeoutMs) {}
                 */
 
+                // Console.WriteLine($"Device {opcItem.DaqName} Measure {config.MeasureName}, value: {value.Value}, good: {StatusCode.IsGood(value.StatusCode)}, timestamp: {value.SourceTimestamp}, now: {DateTime.UtcNow}");
+
                 string timestamp = DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ss.ffffff");
                 string measureName = config.MeasureName;
                 // disallow "myPV_online" measured
@@ -589,6 +602,9 @@ public class OpcSubscribeService : BackgroundService, IOpcSubscribeService
                             // Re-evaluate: Should we write "null" to this point? Or just leave as-is?
                             // ModifyMeasure(connection, config.MeasureName, opcItem.DaqName, null, DateTime.UtcNow);
                         }
+
+                        // good update
+                        opcItem.IgnoreTimestamp = false;
                     }
                     catch (Exception ex)
                     {
@@ -742,7 +758,7 @@ public class OpcSubscribeService : BackgroundService, IOpcSubscribeService
 
 
     //-----------------REFACTORED SUBSCRIBE METHOD BELOW-----------------
-    private async Task<Session> SubscribeToOpcServer(string serverUrl, OpcClientSubscribeConfig config, bool isResubscribe = false)
+    private async Task<Session> SubscribeToOpcServer(string serverUrl, OpcClientPointsConfig config, bool isResubscribe = false)
     {
         //within get session by url it tries 5 times to get a session
         Session session = await OpcuaHelperFunctions.GetSessionByUrl(serverUrl, config.UserIdentity);
@@ -773,7 +789,7 @@ public class OpcSubscribeService : BackgroundService, IOpcSubscribeService
                 {
                     DaqName = oldPoint.DaqName,
                     Config = oldPoint.Config,
-                    IgnoreTimestamp = oldPoint.IgnoreTimestamp,
+                    IgnoreTimestamp = oldPoint.IgnoreTimestamp, // could hard-code as false
                     ClientUrl = oldPoint.ClientUrl,
                     StartNodeId = oldPoint.StartNodeId,
                     AttributeId = oldPoint.AttributeId,
@@ -799,7 +815,7 @@ public class OpcSubscribeService : BackgroundService, IOpcSubscribeService
         subscription.ApplyChanges();
 
         this._statusByUrl[serverUrl] = false; //assume server is offline until get updates, init here so works on start and restart
-        
+
         //initialize/start an opc timer right before subscriptions for that server start
         var timer = InitializeOpcTimeoutTimer(serverUrl);
         Console.WriteLine($"Timeout timer for {serverUrl} started.");
@@ -843,7 +859,7 @@ public class OpcSubscribeService : BackgroundService, IOpcSubscribeService
         // Dispose of the timer that just elapsed
         DisposeTimer(sender);
         _opcTimeoutTimers.Remove(serverUrl);
-        
+
         await StopServerActivities(serverUrl);
 
         await MonitorAndRestartServer(serverUrl);
@@ -930,7 +946,7 @@ public class OpcSubscribeService : BackgroundService, IOpcSubscribeService
                             break;  // Exit OPC UA retry loop and re-check TCP connectivity
                         }
                     }
-                    
+
                     // return from function if inside here.
                     if (_globalCancel.IsCancellationRequested) return;
                 }
@@ -938,7 +954,7 @@ public class OpcSubscribeService : BackgroundService, IOpcSubscribeService
             else
             {
                 Thread.Sleep((int)(tcpSecondsDelay * 1000));
-                
+
                 if (tcpIteration >= TcpDeltaIterations2)
                 {
                     tcpSecondsDelay = TcpDeltaSeconds2;
@@ -953,7 +969,7 @@ public class OpcSubscribeService : BackgroundService, IOpcSubscribeService
                 }
                 tcpIteration += 1;
             }
-            
+
             // return from function if inside here.
             if (_globalCancel.IsCancellationRequested) return;
         }
