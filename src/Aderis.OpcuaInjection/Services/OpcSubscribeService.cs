@@ -169,7 +169,7 @@ public class OpcSubscribeService : BackgroundService, IOpcSubscribeService
             }
 
             Dictionary<string, string> connectionUrls = new();
-            var opcClientConnections = await _opcHelperService.LoadClientConfig();
+            var opcClientConnections = await _opcHelperService.LoadClientConfig(false);
 
             _connectionInfo = new();
             foreach (var opcClientConnection in opcClientConnections)
