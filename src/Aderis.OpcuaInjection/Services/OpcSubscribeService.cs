@@ -3,6 +3,7 @@ using Aderis.OpcuaInjection.Interfaces;
 using Aderis.OpcuaInjection.Models;
 
 using System.Text.Json;
+using System.Diagnostics;
 using Opc.Ua;
 using Opc.Ua.Client;
 using System.Text.Json.Serialization;
@@ -101,7 +102,9 @@ public class OpcSubscribeService : BackgroundService, IOpcSubscribeService
     {
         public required UserIdentity UserIdentity { get; set; }
         public required int TimeoutMs { get; set; }
-        public required List<OPCMonitoredItem> points { get; set; }
+
+        // maps daq_names to points, where each daq_name will get a seperate subscription
+        public required Dictionary<string, List<OPCMonitoredItem>> points { get; set; }
     }
 
     private class OpcClientSubscribeConfig
@@ -185,7 +188,7 @@ public class OpcSubscribeService : BackgroundService, IOpcSubscribeService
                 {
                     UserIdentity = userIdentity,
                     TimeoutMs = opcClientConnection.TimeoutMs,
-                    points = []
+                    points = new()
                 });
 
                 connectionConfig.Add(
@@ -213,7 +216,11 @@ public class OpcSubscribeService : BackgroundService, IOpcSubscribeService
                                 //add the online/offline status row for the current device
                                 CheckAndAddMeasure(connection, deviceType, device, myPVOnlineTag);
 
-                                _opcDevices.Add(device.DaqName);
+                                string daqName = device.DaqName;
+                                string url = connectionConfig[device.Network.Params.Server].Url;
+
+                                _opcDevices.Add(daqName);
+                                _connectionInfo[url].points.Add(daqName, new());
 
                                 //add a row in modvalues for each datapoint the current device provides
                                 //For example adds two rows for same device "weather_station", one for irradiance and one for tilt-angle
@@ -229,8 +236,6 @@ public class OpcSubscribeService : BackgroundService, IOpcSubscribeService
                                         Trigger = DataChangeTrigger.StatusValueTimestamp,
                                         DeadbandType = (uint)DeadbandType.None
                                     };
-
-                                    string url = connectionConfig[device.Network.Params.Server].Url;
 
                                     //construct monitored OPC item based on template in site devices
                                     OPCMonitoredItem oPCMonitoredItem = new()
@@ -251,7 +256,7 @@ public class OpcSubscribeService : BackgroundService, IOpcSubscribeService
 
                                     oPCMonitoredItem.Notification += SubscribedItemChange;
 
-                                    _connectionInfo[url].points.Add(oPCMonitoredItem);
+                                    _connectionInfo[url].points[daqName].Add(oPCMonitoredItem);
                                 }
 
                                 string timestamp = DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ss.ffffff");
@@ -760,59 +765,80 @@ public class OpcSubscribeService : BackgroundService, IOpcSubscribeService
     //-----------------REFACTORED SUBSCRIBE METHOD BELOW-----------------
     private async Task<Session> SubscribeToOpcServer(string serverUrl, OpcClientPointsConfig config, bool isResubscribe = false)
     {
+        Stopwatch stopwatch = new();
+        uint totPoints = 0;
         //within get session by url it tries 5 times to get a session
         Session session = await OpcuaHelperFunctions.GetSessionByUrl(serverUrl, config.UserIdentity);
 
         //add new session to opcClient dict, and make corresponding cancel token
         _opcClientsByUrl[serverUrl] = session;
-
-        var subscription = new OPCSubscription()
+        
+        if (_env.IsDevelopment())
         {
-            DisplayName = $"Subscription to {serverUrl}",
-            PublishingEnabled = true,
-            PublishingInterval = 1000,
-            LifetimeCount = 0,
-            MinLifetimeInterval = 120_000,
-            TimeoutMs = config.TimeoutMs
-        };
-
-        var points = new List<OPCMonitoredItem>();
-
-        //if resubscribe, need to make new instances of monitor items for points to get updates/call SubcribedItemChange 
-        if (isResubscribe)
+            stopwatch.Start();
+        }
+        
+        foreach (var pair in config.points)
         {
-            foreach (var oldPoint in config.points)
+            var daqName = pair.Key;
+            var list = pair.Value;
+
+            var subscription = new OPCSubscription()
             {
-                if (oldPoint.Config.MeasureName == myPVOnlineTag.MeasureName) continue;
+                DisplayName = $"Subscription to {daqName}",
+                PublishingEnabled = true,
+                PublishingInterval = 1000,
+                LifetimeCount = 0,
+                MinLifetimeInterval = 120_000,
+                TimeoutMs = config.TimeoutMs
+            };
 
-                OPCMonitoredItem oPCMonitoredItem = new()
+            if (isResubscribe)
+            {
+                for (int i = 0; i < list.Count; i++)
                 {
-                    DaqName = oldPoint.DaqName,
-                    Config = oldPoint.Config,
-                    IgnoreTimestamp = oldPoint.IgnoreTimestamp, // could hard-code as false
-                    ClientUrl = oldPoint.ClientUrl,
-                    StartNodeId = oldPoint.StartNodeId,
-                    AttributeId = oldPoint.AttributeId,
-                    DisplayName = oldPoint.DisplayName,
-                    SamplingInterval = oldPoint.SamplingInterval,
-                    QueueSize = oldPoint.QueueSize,
-                    DiscardOldest = oldPoint.DiscardOldest,
-                    MonitoringMode = oldPoint.MonitoringMode,
-                    Filter = oldPoint.Filter
-                };
-                oPCMonitoredItem.Notification += SubscribedItemChange;
-                points.Add(oPCMonitoredItem);
+                    var oldPoint = list[i];
+                    if (oldPoint.Config.MeasureName == myPVOnlineTag.MeasureName) continue;
+
+                    oldPoint = new()
+                    {
+                        DaqName = oldPoint.DaqName,
+                        Config = oldPoint.Config,
+                        IgnoreTimestamp = oldPoint.IgnoreTimestamp, // could hard-code as false
+                        ClientUrl = oldPoint.ClientUrl,
+                        StartNodeId = oldPoint.StartNodeId,
+                        AttributeId = oldPoint.AttributeId,
+                        DisplayName = oldPoint.DisplayName,
+                        SamplingInterval = oldPoint.SamplingInterval,
+                        QueueSize = oldPoint.QueueSize,
+                        DiscardOldest = oldPoint.DiscardOldest,
+                        MonitoringMode = oldPoint.MonitoringMode,
+                        Filter = oldPoint.Filter
+                    };
+                    oldPoint.Notification += SubscribedItemChange;
+                }
+            }
+
+            session.AddSubscription(subscription);
+            subscription.Create();
+            subscription.AddItems(list);
+            subscription.ApplyChanges();
+
+            if (_env.IsDevelopment())
+            {
+                totPoints += subscription.MonitoredItemCount;
+                Console.WriteLine($"Finished subscribing for {daqName}: {subscription.MonitoredItemCount} data points");
             }
         }
-        else
-        {
-            points = config.points;
-        }
 
-        session.AddSubscription(subscription);
-        subscription.Create();
-        subscription.AddItems(points); //subscribe to each data stream of each device obtained from site_devices.json
-        subscription.ApplyChanges();
+        if (_env.IsDevelopment())
+        {
+            stopwatch.Stop();
+            Console.WriteLine($"Total Elapsed Time to Subscribe: {stopwatch.ElapsedMilliseconds / 1000}s");
+            Console.WriteLine($"Subscription Count: {session.SubscriptionCount}");
+            Console.WriteLine($"Subscribed Tag Count: {totPoints}");
+        }
+        
 
         this._statusByUrl[serverUrl] = false; //assume server is offline until get updates, init here so works on start and restart
 
@@ -1000,9 +1026,11 @@ public class OpcSubscribeService : BackgroundService, IOpcSubscribeService
     {
         Console.WriteLine($"Marking rows as offline for server: {serverUrl}");
         //get each device 
-        var deviceNamesFromServer = _connectionInfo[serverUrl].points
-                        .Select(item => item.DaqName)
-                        .Distinct();
+        var deviceNamesFromServer = _connectionInfo[serverUrl].points.Values
+            .SelectMany(list => list)
+            .Select(item => item.DaqName)
+            .Distinct();
+        
         using (var connection = new NpgsqlConnection(_dbConnectionString))
         {
             await connection.OpenAsync();
