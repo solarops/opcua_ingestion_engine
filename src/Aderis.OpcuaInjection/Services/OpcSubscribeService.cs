@@ -506,7 +506,9 @@ public class OpcSubscribeService : BackgroundService, IOpcSubscribeService
             Database = connection.Database,
             Username = connection.Username,
             Password = connection.Password,
-            IncludeErrorDetail = _env.IsDevelopment()
+            IncludeErrorDetail = _env.IsDevelopment(),
+            MaxPoolSize = 500,
+            Timeout = 30
         };
 
         return builder.ToString();
