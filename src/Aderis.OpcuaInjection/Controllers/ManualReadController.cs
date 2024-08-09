@@ -35,7 +35,7 @@ public class ManualReadController : BaseApiController
     [HttpGet("read")]
     public async Task<IActionResult> ReadDataPoint([FromQuery] string serverUrl, [FromQuery] string nodeId)
     {
-      Console.WriteLine($"Controller HttpGet(read) hit, method: ReadDataPoint: {serverUrl} {nodeId}");
+      //Console.WriteLine($"Controller HttpGet(read) hit, method: ReadDataPoint: {serverUrl} {nodeId}");
         try
         {
             CancellationToken ct = HttpContext.RequestAborted; //cancel token specific to this request
