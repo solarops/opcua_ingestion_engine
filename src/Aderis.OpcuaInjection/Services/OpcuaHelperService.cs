@@ -61,7 +61,7 @@ public class OpcuaHelperService : IOpcHelperService
         _opcUserIdentityConfig = new("OPCUA_PW_ENCRYPTION_KEY", "OPCUA_IV");
     }
 
-    public async Task<List<OpcClientConnection>> LoadClientConfig()
+    public async Task<List<OpcClientConnection>> LoadClientConfig(bool returnDefault=true)
     {
         var scope = _provider.CreateScope();
         var _context = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
@@ -70,7 +70,7 @@ public class OpcuaHelperService : IOpcHelperService
             .ToListAsync();
         scope.Dispose();
 
-        if (!config.Any())
+        if (returnDefault && !config.Any())
         {
             Console.WriteLine("No client configurations found. Adding default configuration with Ignition server at 62541");
             var defaultConnection = new OpcClientConnection
@@ -96,7 +96,7 @@ public class OpcuaHelperService : IOpcHelperService
 
         if (existingEntry != null) return false;
 
-        if (connection.EncryptedPassword != null)
+        if (connection.EncryptedPassword != null && connection.EncryptedPassword.Length > 0)
         {
             if (!_opcUserIdentityConfig.UserConfig(out var key, out var iv))
             {
@@ -129,7 +129,7 @@ public class OpcuaHelperService : IOpcHelperService
 
             _mapper.Map(connection, existingEntry);
 
-            if (connection.EncryptedPassword != null)
+            if (connection.EncryptedPassword != null && connection.EncryptedPassword.Length > 0)
             {
                 if (!_opcUserIdentityConfig.UserConfig(out var key, out var iv)) {
                     Console.WriteLine("Requested Password, but has no encryption keys generated.");

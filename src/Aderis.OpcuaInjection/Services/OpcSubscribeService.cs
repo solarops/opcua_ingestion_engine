@@ -177,7 +177,7 @@ public class OpcSubscribeService : BackgroundService, IOpcSubscribeService
             }
 
             Dictionary<string, string> connectionUrls = new();
-            var opcClientConnections = await _opcHelperService.LoadClientConfig();
+            var opcClientConnections = await _opcHelperService.LoadClientConfig(false);
 
             _connectionInfo = new();
             foreach (var opcClientConnection in opcClientConnections)
@@ -263,7 +263,7 @@ public class OpcSubscribeService : BackgroundService, IOpcSubscribeService
                     }
                 }
                 //new approach marks offline old rows in one query, also works for devices perhaps not in the new config and still set online from last time but actually no longer online
-                await SetAllMyPVOnlineFalse(connection);
+                await SetAllMyPVOnlineFalse(connection, _opcDevices);
             }
         }
         catch (Exception ex)
@@ -722,7 +722,7 @@ public class OpcSubscribeService : BackgroundService, IOpcSubscribeService
 
     //Used on startup to set all myPV_online tags to 0
     //more effecient than 1 at time modifyMeasure and removes outdated online devices due to bad disconnect or acuity side reconfigs
-    private async Task SetAllMyPVOnlineFalse(NpgsqlConnection connection)
+    private async Task SetAllMyPVOnlineFalse(NpgsqlConnection connection, List<string> devices)
     {
         string formattedUtcNow = DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ss.ffffff");
 
@@ -732,7 +732,9 @@ public class OpcSubscribeService : BackgroundService, IOpcSubscribeService
                 tag_value = @tagValue,
                 measure_value = @measureValue,
                 last_updated = @lastUpdated
-            WHERE tag_name = 'myPV_online';
+            WHERE 
+                tag_name = 'myPV_online'
+                AND device = ANY(@deviceList);
         ";
 
         using (var updateCommand = new NpgsqlCommand(updateQuery, connection))
@@ -740,6 +742,7 @@ public class OpcSubscribeService : BackgroundService, IOpcSubscribeService
             updateCommand.Parameters.AddWithValue("tagValue", 0.0);
             updateCommand.Parameters.AddWithValue("measureValue", 0.0);
             updateCommand.Parameters.AddWithValue("lastUpdated", formattedUtcNow);
+            updateCommand.Parameters.AddWithValue("deviceList", devices);
 
             int affectedRows = await updateCommand.ExecuteNonQueryAsync();
             Console.WriteLine($"On startup: {affectedRows} 'myPV_online' tags have been reset to 0 and timestamp updated.");
