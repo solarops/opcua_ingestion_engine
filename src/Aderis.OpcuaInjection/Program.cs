@@ -16,6 +16,8 @@ builder.Services.AddSingleton<IBrowseService, BrowseService>();
 builder.Services.AddSingleton<OpcSubscribeService>();
 builder.Services.AddHostedService(provider => provider.GetRequiredService<OpcSubscribeService>());
 
+builder.Services.AddSingleton<ManualReadService>();
+
 builder.Services.AddAutoMapper(AppDomain.CurrentDomain.GetAssemblies());
 
 var dbConfig = OpcuaHelperFunctions.LoadDbConfig();
@@ -36,7 +38,7 @@ await _context.Database.MigrateAsync();
 
 // Configure the HTTP request pipeline.
 
-app.UseHttpsRedirection();
+//app.UseHttpsRedirection(); //if hit endpoint with http, tries respond https. commented out so can use curl with read point
 
 app.UseAuthorization();
 
