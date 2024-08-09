@@ -8,11 +8,11 @@ namespace Aderis.OpcuaInjection.Controllers;
 
 public class ManualReadController : BaseApiController
 {
-    private readonly OpcSubscribeService _opcSubscribeService;
+    private readonly ManualReadService _manualReadSvc;
 
-    public ManualReadController(OpcSubscribeService opcSubscribeService)
+    public ManualReadController(ManualReadService manualReadService)
     {
-        _opcSubscribeService = opcSubscribeService;
+        _manualReadSvc = manualReadService;
     }
 
     /// <summary>
@@ -39,7 +39,7 @@ public class ManualReadController : BaseApiController
         try
         {
             CancellationToken ct = HttpContext.RequestAborted; //cancel token specific to this request
-            var result = await _opcSubscribeService.ReadDataPoint(serverUrl, nodeId, ct);
+            var result = await _manualReadSvc.ReadDataPoint(serverUrl, nodeId, ct);
             //Console.WriteLine($"ReadDataPoint: {result}");
             //return Ok(result);
             return Content(result.ToString(), "text/plain");

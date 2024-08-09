@@ -69,7 +69,7 @@ public class OpcuaHelperFunctions
         string rawConfig = GetFileContentsNoLock($"{SosConfigPrefix}/plant_config.json");
         return JsonSerializer.Deserialize<DbConfig>(rawConfig) ?? throw new Exception("Error unpacking plant config!");
     }
-    public static async Task<Session> GetSessionByUrl(string connectionUrl, UserIdentity userIdentity, int iteration = 0)
+    public static async Task<Session> GetNewSessionByUrl(string connectionUrl, UserIdentity userIdentity, int iteration = 0)
     {
         if (iteration > 5) throw new Exception($"Could not get session for {connectionUrl}");
 
@@ -131,7 +131,7 @@ public class OpcuaHelperFunctions
             Console.WriteLine(ex.StackTrace);
             // Wait, Try again
             Thread.Sleep(1500);
-            return await GetSessionByUrl(connectionUrl, userIdentity, iteration+1);
+            return await GetNewSessionByUrl(connectionUrl, userIdentity, iteration+1);
         }
     }
 

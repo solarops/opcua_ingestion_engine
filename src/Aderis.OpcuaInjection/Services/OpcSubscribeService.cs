@@ -41,7 +41,6 @@ public class OpcSubscribeService : BackgroundService, IOpcSubscribeService
     private ConcurrentDictionary<string, bool> _statusByUrl = new();
     private readonly TimeSpan _opcTimeoutPeriod = TimeSpan.FromMinutes(3);
 
-
     /// <summary>
     /// Represents the online/offline status tag for device
     /// </summary>
@@ -74,6 +73,15 @@ public class OpcSubscribeService : BackgroundService, IOpcSubscribeService
     public void ReloadPolling()
     {
         _fileSystemReloadCancel.Cancel();
+    }
+
+    public Session GetOpcClientByUrl(string serverUrl) //get existing session
+    {
+        if (_opcClientsByUrl.TryGetValue(serverUrl, out Session session))
+        {
+            return session;
+        }
+        return null; // Or throw an exception, or any other error handling
     }
 
     private async Task Start(CancellationToken StoppingToken)
@@ -743,7 +751,7 @@ public class OpcSubscribeService : BackgroundService, IOpcSubscribeService
     private async Task<Session> SubscribeToOpcServer(string serverUrl, OpcClientSubscribeConfig config, bool isResubscribe = false)
     {
         //within get session by url it tries 5 times to get a session
-        Session session = await OpcuaHelperFunctions.GetSessionByUrl(serverUrl, config.UserIdentity);
+        Session session = await OpcuaHelperFunctions.GetNewSessionByUrl(serverUrl, config.UserIdentity);
 
         //add new session to opcClient dict, and make corresponding cancel token
         _opcClientsByUrl[serverUrl] = session;
@@ -993,84 +1001,6 @@ public class OpcSubscribeService : BackgroundService, IOpcSubscribeService
             {
                 ModifyMeasure(connection, myPVOnlineTag.MeasureName, daqName, 0.0, timestamp);
             }
-        }
-    }
-
-
-    
-    //TODO: move to own service, but will need getter access to private var _opcClientsByUrl
-     public async Task<ReadResult> ReadDataPoint(string serverUrl, string nodeId, CancellationToken ct)
-    {
-        Console.WriteLine($"In ReadDataPoint(serverUrl,nodeId): Reading data point {nodeId} from server {serverUrl}...");
-        Session session;
-        if (!_opcClientsByUrl.TryGetValue(serverUrl, out session) || session == null)
-        {
-            // session = await OpcuaHelperFunctions.GetSessionByUrl(serverUrl);
-            // _opcClientsByUrl[serverUrl] = session;
-            throw new Exception("No existing connection to server: " + serverUrl);
-        }
-
-        NodeId targetNodeId = new NodeId(nodeId);
-        ReadValueId readValueId = new ReadValueId()
-        {
-            NodeId = targetNodeId,
-            AttributeId = Attributes.Value
-        };
-
-        ReadRequest readRequest = new ReadRequest()
-        {
-            NodesToRead = new ReadValueIdCollection() { readValueId },
-            MaxAge = 0, // Request the most recent value
-            TimestampsToReturn = TimestampsToReturn.Both //return server and source timestamps
-        };
-
-        RequestHeader requestHeader = new RequestHeader(); // Create a request header
-        //CancellationToken ct = new CancellationToken(); // Typically obtained from the calling context or passed as a parameter
-
-        try
-        {
-            // Adjust the method call to include all required parameters
-            ReadResponse readResponse = await session.ReadAsync(requestHeader, 0, TimestampsToReturn.Both, readRequest.NodesToRead, ct);
-            if (readResponse.Results.Count > 0 && StatusCode.IsGood(readResponse.Results[0].StatusCode))
-            {
-                return new ReadResult
-                {
-                    NodeId = targetNodeId.ToString(),
-                    Value = readResponse.Results[0].Value,
-                    Status = readResponse.Results[0].StatusCode,
-                    OpcDataSourceTimestamp = readResponse.Results[0].SourceTimestamp,
-                    OpcServerTimestamp = readResponse.Results[0].ServerTimestamp,
-                    DotnetEngineTimestamp = DateTime.UtcNow
-                };
-            }
-            else
-            {
-                throw new Exception("Failed to read the data point.");
-            }
-        }
-        catch (Exception ex)
-        {
-            throw new Exception($"Error reading data from OPC UA server: {ex.Message}", ex);
-        }
-    }
-
-
-    public class ReadResult
-    {
-        public string NodeId { get; set; } 
-        public object Value { get; set; }
-        public StatusCode Status { get; set; }
-        public DateTime OpcDataSourceTimestamp { get; set; } //when data last changed by source
-        public DateTime OpcServerTimestamp { get; set; } //time on opc server when method called
-        public DateTime DotnetEngineTimestamp { get; set; } //time on computer running this code when method called
-
-        public override string ToString()
-        {
-            return $"NODEID: {NodeId}, \n\n" +
-                $"VALUE: {Value}, STATUS: {Status}, \n\n" +
-                $"OPC DATA POINT TIMESTAMP: {OpcDataSourceTimestamp.ToString("MM/dd/yyyy HH:mm:ss.ffffff")}, \n" +
-                $"OpcServerTimestamp: {OpcServerTimestamp.ToString("MM/dd/yyyy HH:mm:ss.ffffff")}, \n" +
-                $"DotnetEngineTimestamp: {DotnetEngineTimestamp.ToString("MM/dd/yyyy HH:mm:ss.ffffff")}\n";
         }
     }
 }

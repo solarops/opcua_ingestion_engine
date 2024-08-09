@@ -182,7 +182,7 @@ public class OpcuaBrowse
         File.WriteAllText(tempFilePath, "");
 
         // Get Fresh session              
-        Session session = await OpcuaHelperFunctions.GetSessionByUrl(_opcClientConnection.Url, _userIdentity);
+        Session session = await OpcuaHelperFunctions.GetNewSessionByUrl(_opcClientConnection.Url, _userIdentity);
 
         JsTreeExport jsTreeExport = new();
 
