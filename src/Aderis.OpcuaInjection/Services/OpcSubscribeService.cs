@@ -290,6 +290,10 @@ public class OpcSubscribeService : BackgroundService, IOpcSubscribeService
             catch (Exception ex)
             {
                 Console.WriteLine($"Failed to subscribe to server {serverUrl}: {ex.Message}");
+                if (_env.IsDevelopment())
+                {
+                    Console.WriteLine(ex.StackTrace);
+                }
                 return;
             }
         }
